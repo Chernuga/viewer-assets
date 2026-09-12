@@ -1,16 +1,6 @@
 {
   "ambientocclusion": false,
   "textures": {
-    "particle": "minecraft:block/obsidian",
-    "portal": "minecraft:entity/end_portal"
-  },
-  "elements": [
-    {
-      "from": [ 0, 0, 0 ],
-      "to":   [ 16, 16, 16 ],
-      "faces": {
-        "up":    { "uv": [ 0, 0, 16, 16 ], "texture": "#portal" }
-      }
-    }
-  ]
+    "particle": "minecraft:block/obsidian"
+  }
 }
