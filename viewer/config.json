@@ -47,6 +47,6 @@
   },
   "render": {
     "bumpMap": true,
-    "bumpScale": 0.001
+    "bumpScale": 0.00001
   }
 }
