@@ -51,11 +51,11 @@
     "normalEdgeBoost": 3.0,
     "shading": {
       "enabled": true,
-      "resolution": 256,
-      "strength": 30.0,
-      "radiusTexels": 0.1,
+      "resolution": 128,
+      "strength": 1.2,
+      "radiusTexels": 2.5,
       "lightDirUv": [-1, -1],
-      "minContrast": 0.03
+      "minContrast": 0.05
     }
   },
   "lighting": {
