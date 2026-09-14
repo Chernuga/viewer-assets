@@ -29,14 +29,14 @@
     ]
   },
   "dayCycle": {
-    "startAnglePi": 1,
+    "startAnglePi": 0,
     "cycleSeconds": null
   },
   "stars": {
     "enabled": true,
     "distance": 780,
     "attempts": 1500,
-    "sizeScale": 0.01,
+    "sizeScale": 0.0001,
     "opacityMin": 0.4,
     "opacityMax": 0.9,
     "blinkSpeed": 2.0,
