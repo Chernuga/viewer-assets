@@ -53,7 +53,7 @@
       "enabled": true,
       "resolution": 256,
       "strength": 3.0,
-      "radiusTexels": 1.0,
+      "radiusTexels": 0.1,
       "lightDirUv": [-1, -1],
       "minContrast": 0.03
     }
