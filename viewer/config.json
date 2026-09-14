@@ -46,7 +46,17 @@
     "shaderSpeed": 0.0001
   },
   "render": {
-    "bumpMap": true,
-    "bumpScale": 0.00001
+    "normalMap": true, 
+    "normalStrength": 0.5, 
+    "normalSobelBoost": 1 
+  },
+  "lighting": {
+    "ambientDay": 0.45,
+    "ambientNight": 0.22,
+    "sunColor": "#fff3d6",
+    "sunIntensity": 1.5,
+    "moonColor": "#8fa3c8",
+    "moonIntensity": 0.5,
+    "horizonFadeAngle": 0.2
   }
 }
