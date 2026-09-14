@@ -44,5 +44,8 @@
   },
   "animation": {
     "shaderSpeed": 0.0001
-  }
+  },
+  "render": {
+    "bumpMap": true,
+    "bumpScale": 0.05
 }
