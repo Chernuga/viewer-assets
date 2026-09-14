@@ -1,6 +1,6 @@
 {
   "textures": {
-      "particle": "minecraft:block/obsidian"
+      "particle": "minecraft:block/obsidian",
       "portal": "minecraft:entity/end_portal"
     },
     "elements": [
