@@ -48,7 +48,7 @@
   "render": {
     "normalMap": true, 
     "normalStrength": 1, 
-    "normalSobelBoost": 0.5
+    "normalSobelBoost": 50
   },
   "lighting": {
     "ambientDay": 0.45,
