@@ -1,0 +1,48 @@
+{
+  "sky": {
+    "stateCount": 8,
+    "stateDuration": 10,
+    "holdFraction": 0.0,
+    "brightness": 1.3,
+    "saturation": 1.0
+  },
+  "sun": {
+    "enabled": true,
+    "size": 300,
+    "distance": 700,
+    "texturePath": "environment/celestial/sun.png"
+  },
+  "moon": {
+    "enabled": true,
+    "size": 300,
+    "distance": 700,
+    "startingPhase": 0,
+    "phaseFiles": [
+      "environment/celestial/moon/full_moon.png",
+      "environment/celestial/moon/waning_gibbous.png",
+      "environment/celestial/moon/third_quarter.png",
+      "environment/celestial/moon/waning_crescent.png",
+      "environment/celestial/moon/new_moon.png",
+      "environment/celestial/moon/waxing_crescent.png",
+      "environment/celestial/moon/first_quarter.png",
+      "environment/celestial/moon/waxing_gibbous.png"
+    ]
+  },
+  "dayCycle": {
+    "startAnglePi": 1,
+    "cycleSeconds": null
+  },
+  "stars": {
+    "enabled": true,
+    "distance": 780,
+    "attempts": 1500,
+    "sizeScale": 0.2,
+    "opacityMin": 0.4,
+    "opacityMax": 0.9,
+    "blinkSpeed": 2.0,
+    "blinkAmount": 0.15
+  },
+  "animation": {
+    "shaderSpeed": 0.0001
+  }
+}
