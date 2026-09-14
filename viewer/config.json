@@ -29,7 +29,7 @@
     ]
   },
   "dayCycle": {
-    "startAnglePi": 0.2,
+    "startAnglePi": 0,
     "cycleSeconds": null
   },
   "stars": {
