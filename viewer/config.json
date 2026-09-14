@@ -36,7 +36,7 @@
     "enabled": true,
     "distance": 780,
     "attempts": 1500,
-    "sizeScale": 0.2,
+    "sizeScale": 0.01,
     "opacityMin": 0.4,
     "opacityMax": 0.9,
     "blinkSpeed": 2.0,
