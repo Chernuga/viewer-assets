@@ -49,7 +49,7 @@
     "shadow": {
       "enabled": true,
       "layerCount": 8,
-      "resolutionScale": 4,
+      "resolutionScale": 8,
       "strength": 1.0,
       "maxAtten": 0.35,
       "minContrast": 0.04
