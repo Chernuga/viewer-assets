@@ -46,16 +46,13 @@
     "shaderSpeed": 0.0001
   },
   "render": {
-    "normalMap": false,
-    "normalStrength": 0.9,
-    "normalEdgeBoost": 3.0,
-    "shading": {
+    "pom": {
       "enabled": true,
-      "resolution": 128,
-      "strength": 1.2,
-      "radiusTexels": 2.5,
-      "lightDirUv": [-1, -1],
-      "minContrast": 0.05
+      "scale": 0.05,
+      "steps": 12,
+      "shadows": true,
+      "shadowDarkness": 0.65,
+      "minContrast": 0.04
     }
   },
   "lighting": {
