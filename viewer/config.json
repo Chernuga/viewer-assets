@@ -48,7 +48,7 @@
   "render": {
     "shadow": {
       "enabled": true,
-      "layerCount": 3,
+      "layerCount": 8,
       "resolutionScale": 16,
       "strength": 1.0,
       "maxAtten": 0.35,
