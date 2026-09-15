@@ -49,7 +49,7 @@
     "pom": {
       "enabled": true,
       "scale": 0.05,
-      "steps": 12,
+      "steps": 2,
       "shadows": true,
       "shadowDarkness": 0.65,
       "minContrast": 0.04
