@@ -51,7 +51,7 @@
       "layerCount": 8,
       "layerStep": 0.03,
       "strength": 1.0,
-      "maxAtten": 0.3,
+      "maxAtten": 0.03,
       "minContrast": 0.04
     }
   },
