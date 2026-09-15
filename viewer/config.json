@@ -48,8 +48,8 @@
   "render": {
     "pom": {
       "enabled": true,
-      "scale": 0.05,
-      "steps": 2,
+      "scale": 0.0,
+      "steps": 16,
       "shadows": true,
       "shadowDarkness": 0.65,
       "minContrast": 0.04
