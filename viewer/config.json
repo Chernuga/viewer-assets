@@ -46,12 +46,12 @@
     "shaderSpeed": 0.0001
   },
   "render": {
-    "pom": {
+    "shadow": {
       "enabled": true,
-      "scale": 0.001,
-      "steps": 16,
-      "shadows": true,
-      "shadowDarkness": 0.65,
+      "layerCount": 8,
+      "layerStep": 0.03,
+      "strength": 1.0,
+      "maxAtten": 0.3,
       "minContrast": 0.04
     }
   },
