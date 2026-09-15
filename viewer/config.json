@@ -53,7 +53,7 @@
       "strength": 1.0,
       "maxAtten": 0.35,
       "minContrast": 0.04,
-      "texelPerLayer": 16
+      "texelPerLayer": 1024
     }
   },
   "lighting": {
