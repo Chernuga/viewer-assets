@@ -48,12 +48,12 @@
   "render": {
     "shadow": {
       "enabled": true,
-      "layerCount": 8,
-      "resolutionScale": 4,
+      "layerCount": 3,
+      "resolutionScale": 16,
       "strength": 1.0,
       "maxAtten": 0.35,
       "minContrast": 0.04,
-      "texelPerLayer": 8
+      "texelPerLayer": 16
     }
   },
   "lighting": {
