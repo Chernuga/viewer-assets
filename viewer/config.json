@@ -49,10 +49,11 @@
     "shadow": {
       "enabled": true,
       "layerCount": 8,
-      "layerStep": 0.03,
+      "resolutionScale": 4,
       "strength": 1.0,
-      "maxAtten": 0.03,
-      "minContrast": 0.04
+      "maxAtten": 0.35,
+      "minContrast": 0.04,
+      "texelPerLayer": null
     }
   },
   "lighting": {
