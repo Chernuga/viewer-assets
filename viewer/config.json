@@ -47,7 +47,7 @@
   },
   "render": {
     "shadow": {
-      "enabled": true,
+      "enabled": false,
       "layerCount": 8,
       "resolutionScale": 16,
       "strength": 1.0,
