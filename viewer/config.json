@@ -49,7 +49,7 @@
     "normalMap": false,
     "normalStrength": 0.9,
     "normalEdgeBoost": 3.0,
-    "minContrast": 0.03
+    "minContrast": 0.03,
     "concurrency": 30
   },
   "lighting": {
