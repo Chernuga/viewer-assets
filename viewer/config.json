@@ -50,7 +50,7 @@
     "normalStrength": 0.9,
     "normalEdgeBoost": 3.0,
     "minContrast": 0.03
-    "concurrency": 20
+    "concurrency": 30
   },
   "lighting": {
     "ambientDay": 0.45,
