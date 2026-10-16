@@ -82,6 +82,8 @@ const CONFIG_DEFAULTS = {
     normalStrength: 0.9,
     normalEdgeBoost: 3.0,
     minContrast: 0.03,
+    dedupeCoincidentFaces: true,
+    concurrency: 12,
   },
   lighting: {
     ambientDay: 0.55, ambientNight: 0.30,
@@ -102,6 +104,25 @@ function mergeConfig(defaults, loaded) {
   }
   for (const section in (loaded || {})) if (!out[section]) out[section] = loaded[section];
   return out;
+}
+
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  const errors = [];
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      try { results[i] = await fn(items[i], i); }
+      catch (err) { errors.push({ index: i, item: items[i], error: err }); }
+    }
+  }
+  const poolSize = Math.max(1, Math.min(limit, items.length));
+  const workers = [];
+  for (let i = 0; i < poolSize; i++) workers.push(worker());
+  await Promise.all(workers);
+  return { results, errors };
 }
 
 async function loadConfig() {
@@ -136,37 +157,13 @@ async function fetchLatestCommitSha() {
   } catch (err) { console.warn('SHA fetch failed', err); return BRANCH; }
 }
 
-async function forceRefreshSha() {
-  localStorage.removeItem(SHA_KEY);
-  textureCache.clear(); normalMapCache.clear(); normalMapPending.clear();
-  modelCache.clear(); blockstateCache.clear(); defaultPropsCache.clear();
-  shaderSourceCache.clear(); shaderMaterialCache.clear();
-  animatedTextures.length = 0; timeUniforms.length = 0; cullableMeshes.clear();
-  if (skyMesh) { scene.remove(skyMesh); skyMesh.geometry.dispose(); skyMaterial.dispose(); skyMesh = null; skyMaterial = null; skyTexture = null; }
-  if (starContainer) { scene.remove(starContainer); starMesh.geometry.dispose(); starMesh.material.dispose(); starContainer = null; starMesh = null; }
-  if (sunMesh) { scene.remove(sunMesh); sunMesh.geometry.dispose(); sunMesh.material.dispose(); sunMesh = null; }
-  if (moonMesh) { scene.remove(moonMesh); moonMesh.geometry.dispose(); moonMesh.material.dispose(); moonMesh = null; }
-  moonTextures = [];
-  currentMoonPhaseIndex = -1;
-  skyElapsed = 0; dayElapsed = 0;
-  const sha = await fetchLatestCommitSha();
-  ASSET_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}/minecraft`;
-  REPO_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}`;
-  console.log('Refreshed asset base:', ASSET_BASE);
-  await loadConfig();
-  await setupSky();
-  await setupCelestialBodies();
-  await setupStars();
-  await build();
-}
-
 const canvas = document.getElementById('webgl-canvas');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x071014);
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 5000);
 camera.position.set(6, 6, 6);
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.setSize(window.innerWidth, window.innerHeight);
 
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
@@ -183,18 +180,26 @@ scene.add(gridHelper);
 const controls = new OrbitControls(camera, canvas);
 controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
 
+const worldGroup = new THREE.Group();
+scene.add(worldGroup);
+
 const textureCache = new Map();
 const normalMapCache = new Map();
 const normalMapPending = new Map();
 const modelCache = new Map();
+const modelPending = new Map();
 const blockstateCache = new Map();
+const blockstatePending = new Map();
 const defaultPropsCache = new Map();
 const shaderSourceCache = new Map();
 const shaderMaterialCache = new Map();
+const shaderMaterialPending = new Map();
 const timeUniforms = [];
-const worldBlocks = new Map();
 const animatedTextures = [];
-const cullableMeshes = new Set();
+
+const materialBuckets = new Map();
+const blockMaterialCache = new Map();
+
 const magentaTex = new THREE.DataTexture(new Uint8Array([255,0,255,255]), 1, 1, THREE.RGBAFormat);
 magentaTex.needsUpdate = true;
 
@@ -333,7 +338,8 @@ function buildStarGeometry() {
   const attrRng = new JavaRandom(1337);
   const positions = [], opacities = [], phases = [], indices = [];
   let vertIndex = 0;
-  const scale = (CONFIG.stars.distance / 100) * CONFIG.stars.sizeScale;
+  const posScale = CONFIG.stars.distance / 100;
+  const quadScale = posScale * (CONFIG.stars.sizeScale / 0.001);
 
   for (let i = 0; i < CONFIG.stars.attempts; i++) {
     let d0 = posRng.nextFloat() * 2 - 1;
@@ -362,7 +368,11 @@ function buildStarGeometry() {
         const d24 = -d21 * d13;
         const d25 = d24 * d9 - d22 * d10;
         const d26 = d22 * d9 + d24 * d10;
-        positions.push((d5 + d25) * scale, (d6 + d23) * scale, (d7 + d26) * scale);
+        positions.push(
+          d5 * posScale + d25 * quadScale,
+          d6 * posScale + d23 * quadScale,
+          d7 * posScale + d26 * quadScale
+        );
         opacities.push(starOpacity);
         phases.push(starPhase);
       }
@@ -473,18 +483,21 @@ async function createMCShaderMaterial({
 }) {
   const key = vshPath + '|' + fshPath + '|' + JSON.stringify(defines);
   if (shaderMaterialCache.has(key)) return shaderMaterialCache.get(key);
-  try {
-    const [vshRaw, fshRaw] = await Promise.all([loadShaderFile(vshPath), loadShaderFile(fshPath)]);
-    let vsh = await preprocessShader(vshRaw);
-    let fsh = await preprocessShader(fshRaw);
-    vsh = injectDefines(vsh, defines);
-    fsh = injectDefines(fsh, defines);
-    vsh = stripShaderPreamble(vsh);
-    fsh = stripShaderPreamble(fsh);
-    vsh = normalizeShaderSource(vsh, true);
-    fsh = normalizeShaderSource(fsh, false);
+  if (shaderMaterialPending.has(key)) return shaderMaterialPending.get(key);
 
-    const commonHeader = `precision highp float;
+  const p = (async () => {
+    try {
+      const [vshRaw, fshRaw] = await Promise.all([loadShaderFile(vshPath), loadShaderFile(fshPath)]);
+      let vsh = await preprocessShader(vshRaw);
+      let fsh = await preprocessShader(fshRaw);
+      vsh = injectDefines(vsh, defines);
+      fsh = injectDefines(fsh, defines);
+      vsh = stripShaderPreamble(vsh);
+      fsh = stripShaderPreamble(fsh);
+      vsh = normalizeShaderSource(vsh, true);
+      fsh = normalizeShaderSource(fsh, false);
+
+      const commonHeader = `precision highp float;
 precision highp int;
 uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
@@ -507,59 +520,67 @@ uniform float GameTime;
 uniform ivec3 CameraBlockPos;
 uniform vec3 CameraOffset;
 `;
-    const vertexShader = commonHeader + `in vec3 position;\nin vec3 normal;\nin vec2 uv;\n` + vsh;
-    const fragmentShader = commonHeader + fsh;
+      const vertexShader = commonHeader + `in vec3 position;\nin vec3 normal;\nin vec2 uv;\n` + vsh;
+      const fragmentShader = commonHeader + fsh;
 
-    const finalUniforms = {
-      modelViewMatrix: { value: new THREE.Matrix4() },
-      projectionMatrix: { value: new THREE.Matrix4() },
-      modelMatrix: { value: new THREE.Matrix4() },
-      viewMatrix: { value: new THREE.Matrix4() },
-      normalMatrix: { value: new THREE.Matrix3() },
-      cameraPosition: { value: new THREE.Vector3() },
-      ColorModulator: { value: new THREE.Vector4(1, 1, 1, 1) },
-      ModelOffset: { value: new THREE.Vector3(0, 0, 0) },
-      TextureMat: { value: new THREE.Matrix4() },
-      LineWidth: { value: 1.0 },
-      GameTime: { value: 0 },
-      FogColor: { value: new THREE.Vector4(0, 0, 0, 1) },
-      FogEnvironmentalStart: { value: 0.0 },
-      FogEnvironmentalEnd: { value: 1000.0 },
-      FogRenderDistanceStart: { value: 200.0 },
-      FogRenderDistanceEnd: { value: 1000.0 },
-      FogSkyEnd: { value: 1000.0 },
-      FogCloudsEnd: { value: 1000.0 },
-      CameraBlockPos: { value: new THREE.Vector3(0, 0, 0) },
-      CameraOffset: { value: new THREE.Vector3(0, 0, 0) },
-      ...uniforms,
-    };
-    for (const [k, v] of Object.entries(textures)) finalUniforms[k] = { value: v };
+      const finalUniforms = {
+        modelViewMatrix: { value: new THREE.Matrix4() },
+        projectionMatrix: { value: new THREE.Matrix4() },
+        modelMatrix: { value: new THREE.Matrix4() },
+        viewMatrix: { value: new THREE.Matrix4() },
+        normalMatrix: { value: new THREE.Matrix3() },
+        cameraPosition: { value: new THREE.Vector3() },
+        ColorModulator: { value: new THREE.Vector4(1, 1, 1, 1) },
+        ModelOffset: { value: new THREE.Vector3(0, 0, 0) },
+        TextureMat: { value: new THREE.Matrix4() },
+        LineWidth: { value: 1.0 },
+        GameTime: { value: 0 },
+        FogColor: { value: new THREE.Vector4(0, 0, 0, 1) },
+        FogEnvironmentalStart: { value: 0.0 },
+        FogEnvironmentalEnd: { value: 1000.0 },
+        FogRenderDistanceStart: { value: 200.0 },
+        FogRenderDistanceEnd: { value: 1000.0 },
+        FogSkyEnd: { value: 1000.0 },
+        FogCloudsEnd: { value: 1000.0 },
+        CameraBlockPos: { value: new THREE.Vector3(0, 0, 0) },
+        CameraOffset: { value: new THREE.Vector3(0, 0, 0) },
+        ...uniforms,
+      };
+      for (const [k, v] of Object.entries(textures)) finalUniforms[k] = { value: v };
 
-    const material = new THREE.RawShaderMaterial({
-      vertexShader, fragmentShader, uniforms: finalUniforms, transparent, side,
-      glslVersion: THREE.GLSL3,
-    });
-    material.onBeforeRender = function (renderer, scene, camera, geometry, object) {
-      const u = this.uniforms;
-      u.modelViewMatrix.value.multiplyMatrices(camera.matrixWorldInverse, object.matrixWorld);
-      u.projectionMatrix.value.copy(camera.projectionMatrix);
-      u.modelMatrix.value.copy(object.matrixWorld);
-      u.viewMatrix.value.copy(camera.matrixWorldInverse);
-      u.normalMatrix.value.getNormalMatrix(u.modelViewMatrix.value);
-      u.cameraPosition.value.setFromMatrixPosition(camera.matrixWorld);
-    };
-    if (!timeUniforms.find(t => t.uniformRef === finalUniforms.GameTime)) {
-      timeUniforms.push({ uniformRef: finalUniforms.GameTime, speed: 20 });
+      const material = new THREE.RawShaderMaterial({
+        vertexShader, fragmentShader, uniforms: finalUniforms, transparent, side,
+        glslVersion: THREE.GLSL3,
+      });
+      material.onBeforeRender = function (renderer, scene, camera, geometry, object) {
+        const u = this.uniforms;
+        u.modelViewMatrix.value.multiplyMatrices(camera.matrixWorldInverse, object.matrixWorld);
+        u.projectionMatrix.value.copy(camera.projectionMatrix);
+        u.modelMatrix.value.copy(object.matrixWorld);
+        u.viewMatrix.value.copy(camera.matrixWorldInverse);
+        u.normalMatrix.value.getNormalMatrix(u.modelViewMatrix.value);
+        u.cameraPosition.value.setFromMatrixPosition(camera.matrixWorld);
+      };
+      if (!timeUniforms.find(t => t.uniformRef === finalUniforms.GameTime)) {
+        timeUniforms.push({ uniformRef: finalUniforms.GameTime, speed: 20 });
+      }
+      shaderMaterialCache.set(key, material);
+      return material;
+    } catch (err) {
+      showError(`Shader setup failed (${vshPath}): ${err.message}`);
+      console.error(err);
+      const fallbackTex = textures.Sampler0 || textures.Sampler1 || magentaTex;
+      return new THREE.MeshBasicMaterial({ map: fallbackTex, transparent, side });
+    } finally {
+      shaderMaterialPending.delete(key);
     }
-    shaderMaterialCache.set(key, material);
-    return material;
-  } catch (err) {
-    showError(`Shader setup failed (${vshPath}): ${err.message}`);
-    console.error(err);
-    const fallbackTex = textures.Sampler0 || textures.Sampler1 || magentaTex;
-    return new THREE.MeshBasicMaterial({ map: fallbackTex, transparent, side });
-  }
+  })();
+
+  shaderMaterialPending.set(key, p);
+  return p;
 }
+
+const SHADER_BLOCK_IDS = new Set(['end_portal', 'end_gateway']);
 
 async function getShaderConfigForBlock(blockId) {
   const id = blockId.replace('minecraft:', '');
@@ -702,39 +723,68 @@ async function loadModel(modelName) {
   let clean = modelName.replace('minecraft:', '');
   if (!clean.startsWith('block/')) clean = `block/${clean}`;
   if (modelCache.has(clean)) return modelCache.get(clean);
-  try {
-    const res = await fetch(`${ASSET_BASE}/models/${clean}.json`);
-    if (!res.ok) throw new Error(`HTTP ${res.status} for ${clean}`);
-    const data = await res.json();
-    if (data.parent) {
-      const parent = await loadModel(data.parent);
-      data.textures = { ...parent.textures, ...data.textures };
-      if (!data.elements && parent.elements) data.elements = parent.elements;
+  if (modelPending.has(clean)) return modelPending.get(clean);
+
+  const p = (async () => {
+    try {
+      const res = await fetch(`${ASSET_BASE}/models/${clean}.json`);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${clean}`);
+      const data = await res.json();
+      if (data.parent) {
+        const parent = await loadModel(data.parent);
+        if (parent) {
+          data.textures = { ...(parent.textures || {}), ...(data.textures || {}) };
+          if (!data.elements && parent.elements) data.elements = parent.elements;
+        }
+      }
+      modelCache.set(clean, data);
+      return data;
+    } catch (err) {
+      showError(`Model error: ${err.message}`);
+      modelCache.set(clean, null);
+      return null;
+    } finally {
+      modelPending.delete(clean);
     }
-    modelCache.set(clean, data);
-    return data;
-  } catch (err) { showError(`Model error: ${err.message}`); modelCache.set(clean, null); return null; }
+  })();
+
+  modelPending.set(clean, p);
+  return p;
 }
 
 async function loadBlockstate(blockId) {
   const clean = blockId.replace('minecraft:', '');
   if (blockstateCache.has(clean)) return blockstateCache.get(clean);
-  try {
-    const res = await fetch(`${ASSET_BASE}/blockstates/${clean}.json`);
-    if (!res.ok) throw new Error(`HTTP ${res.status} for ${clean}`);
-    const data = await res.json();
-    blockstateCache.set(clean, data);
-    return data;
-  } catch {
-    const fallback = { variants: { "": { model: clean } } };
-    blockstateCache.set(clean, fallback);
-    return fallback;
-  }
+  if (blockstatePending.has(clean)) return blockstatePending.get(clean);
+
+  const p = (async () => {
+    try {
+      const res = await fetch(`${ASSET_BASE}/blockstates/${clean}.json`);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${clean}`);
+      const data = await res.json();
+      blockstateCache.set(clean, data);
+      return data;
+    } catch {
+      const fallback = { variants: { "": { model: clean } } };
+      blockstateCache.set(clean, fallback);
+      return fallback;
+    } finally {
+      blockstatePending.delete(clean);
+    }
+  })();
+
+  blockstatePending.set(clean, p);
+  return p;
 }
 
 const PREFERRED_DEFAULTS = ['y','north','bottom','up','false','none','straight','single','lower','base','floor','left','foot','0','harp','inactive','unlit','unlocked','intact','unpowered','south','east','west','down'];
 
-function computeDefaultProperties(stateData) {
+const BOOLEAN_TRUE_BLOCKS = new Set(['fire', 'soul_fire']);
+
+function computeDefaultProperties(stateData, blockId) {
+  const cleanId = (blockId || '').replace('minecraft:', '');
+  const preferTrue = BOOLEAN_TRUE_BLOCKS.has(cleanId);
+
   const propValues = {};
   if (stateData.variants) {
     for (const vk of Object.keys(stateData.variants)) {
@@ -763,8 +813,15 @@ function computeDefaultProperties(stateData) {
   const defaults = {};
   for (const k in propValues) {
     const vals = Array.from(propValues[k]);
-    if (vals.includes('true') && vals.includes('false')) { defaults[k] = 'false'; continue; }
-    if (vals.length === 1 && (vals[0] === 'true' || vals[0] === 'false')) { defaults[k] = 'false'; continue; }
+    const booleanProp = vals.includes('true') || vals.includes('false');
+    if (booleanProp && vals.includes('true') && vals.includes('false')) {
+      defaults[k] = preferTrue ? 'true' : 'false';
+      continue;
+    }
+    if (vals.length === 1 && (vals[0] === 'true' || vals[0] === 'false')) {
+      defaults[k] = preferTrue ? 'true' : 'false';
+      continue;
+    }
     let found = null;
     for (const pref of PREFERRED_DEFAULTS) if (vals.includes(pref)) { found = pref; break; }
     defaults[k] = found || vals.sort()[0];
@@ -774,7 +831,7 @@ function computeDefaultProperties(stateData) {
 
 function getDefaultProperties(stateData, blockId) {
   if (defaultPropsCache.has(blockId)) return defaultPropsCache.get(blockId);
-  const d = computeDefaultProperties(stateData);
+  const d = computeDefaultProperties(stateData, blockId);
   defaultPropsCache.set(blockId, d);
   return d;
 }
@@ -800,26 +857,81 @@ function getDefaultUV(face, from, to) {
 }
 
 let grassColormap = null, foliageColormap = null;
+let grassColormapData = null, foliageColormapData = null;
+
+function imageToData(img) {
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  return { data: ctx.getImageData(0, 0, img.width, img.height).data, w: img.width, h: img.height };
+}
+
 async function loadColormaps() {
   try {
-    grassColormap = await loadImage(`${ASSET_BASE}/textures/colormap/grass.png`);
-    foliageColormap = await loadImage(`${ASSET_BASE}/textures/colormap/foliage.png`);
+    if (!grassColormap) {
+      grassColormap = await loadImage(`${ASSET_BASE}/textures/colormap/grass.png`);
+      grassColormapData = imageToData(grassColormap);
+    }
+    if (!foliageColormap) {
+      foliageColormap = await loadImage(`${ASSET_BASE}/textures/colormap/foliage.png`);
+      foliageColormapData = imageToData(foliageColormap);
+    }
   } catch (err) { console.warn('Colormap load failed', err); }
 }
-function getBiomeColor(temp, humidity, colormapImg) {
-  const c = document.createElement('canvas'); c.width = colormapImg.width; c.height = colormapImg.height;
-  const ctx = c.getContext('2d'); ctx.drawImage(colormapImg, 0, 0);
-  const x = Math.floor((1 - humidity) * (colormapImg.width - 1));
-  const y = Math.floor((1 - temp) * (colormapImg.height - 1));
-  const d = ctx.getImageData(x, y, 1, 1).data;
-  return new THREE.Color(d[0]/255, d[1]/255, d[2]/255);
+
+function getBiomeColor(temp, humidity, cmap) {
+  if (!cmap) return new THREE.Color(1, 1, 1);
+  const x = Math.min(cmap.w - 1, Math.max(0, Math.floor((1 - humidity) * (cmap.w - 1))));
+  const y = Math.min(cmap.h - 1, Math.max(0, Math.floor((1 - temp) * (cmap.h - 1))));
+  const i = (y * cmap.w + x) * 4;
+  return new THREE.Color(cmap.data[i] / 255, cmap.data[i + 1] / 255, cmap.data[i + 2] / 255);
 }
-function getTintForBlock(blockId, tintIndex) {
+
+const tintColorCache = new Map();
+function getTintColor(tintIndex) {
+  if (tintColorCache.has(tintIndex)) return tintColorCache.get(tintIndex);
   const temp = 0.8, humidity = 0.4;
-  if (tintIndex === 0) { if (grassColormap) return getBiomeColor(temp, humidity, grassColormap); }
-  else if (tintIndex === 1) { if (foliageColormap) return getBiomeColor(temp, humidity, foliageColormap); }
-  else if (tintIndex === 2) return new THREE.Color(0.2, 0.4, 1.0);
-  return new THREE.Color(1,1,1);
+  let color;
+  if (tintIndex === 0) color = getBiomeColor(temp, humidity, grassColormapData);
+  else if (tintIndex === 1) color = getBiomeColor(temp, humidity, foliageColormapData);
+  else if (tintIndex === 2) color = new THREE.Color(0.2, 0.4, 1.0);
+  else color = new THREE.Color(1, 1, 1);
+  tintColorCache.set(tintIndex, color);
+  return color;
+}
+
+/* ============================= MATERIAL CACHE ============================= */
+
+const TRANSLUCENT_BLOCKS = new Set([
+  'water', 'bubble_column', 'ice', 'blue_ice', 'frosted_ice',
+  'slime_block', 'honey_block', 'nether_portal', 'tinted_glass', 'powder_snow',
+]);
+function isTranslucentBlock(id) {
+  const b = id.replace('minecraft:', '');
+  return TRANSLUCENT_BLOCKS.has(b) || b.includes('stained_glass');
+}
+
+function getBlockMaterial(texPath, tintIndex, translucent, flat) {
+  const key = texPath + '|' + (tintIndex === undefined ? -1 : tintIndex) + '|' + (translucent ? 'T' : 'O') + '|' + (flat ? 'D' : 'S');
+  let mat = blockMaterialCache.get(key);
+  if (mat) return mat;
+
+  const texture = getTexture(texPath);
+  mat = new THREE.MeshLambertMaterial({
+    map: texture,
+    transparent: !!translucent,
+    alphaTest: translucent ? 0.0 : 0.5,
+    side: flat ? THREE.DoubleSide : THREE.FrontSide,
+    depthWrite: !translucent,
+  });
+  if (tintIndex !== undefined) mat.color = getTintColor(tintIndex);
+
+  const isAnimated = !!texture.userData?.frameCount;
+  if (!isAnimated && texture !== magentaTex) attachNormalMap(mat, texPath);
+
+  blockMaterialCache.set(key, mat);
+  return mat;
 }
 
 /* ============================= FACE GEOMETRY ============================= */
@@ -832,33 +944,85 @@ const FACE_DEFS = {
   south: { normal: [ 0, 0, 1], corners: (f, t) => [[t[0], f[1], t[2]], [t[0], t[1], t[2]], [f[0], t[1], t[2]], [f[0], f[1], t[2]]] },
   north: { normal: [ 0, 0,-1], corners: (f, t) => [[f[0], f[1], f[2]], [f[0], t[1], f[2]], [t[0], t[1], f[2]], [t[0], f[1], f[2]]] }
 };
+const FACE_NAMES = Object.keys(FACE_DEFS);
+const FACE_DIRS = {
+  east: [1, 0, 0], west: [-1, 0, 0], up: [0, 1, 0],
+  down: [0, -1, 0], south: [0, 0, 1], north: [0, 0, -1],
+};
 
-async function buildElementFaceMeshes(el, modelTextures, blockIdForTint) {
-  const from = el.from.map(v => v / 16);
-  const to = el.to.map(v => v / 16);
-  const result = [];
+/* ============================= GEOMETRY BATCHING ============================= */
 
-  for (const faceName in FACE_DEFS) {
+function getBucket(material) {
+  let b = materialBuckets.get(material);
+  if (!b) {
+    b = { material, faces: [] };
+    materialBuckets.set(material, b);
+  }
+  return b;
+}
+
+const _qc0 = new THREE.Vector3(), _qc1 = new THREE.Vector3(), _qc2 = new THREE.Vector3(), _qc3 = new THREE.Vector3();
+const _qn = new THREE.Vector3();
+
+function pushQuad(bucket, c0, c1, c2, c3, n, uvs, blockKey) {
+  bucket.faces.push({
+    corners: [
+      [c0.x, c0.y, c0.z], [c1.x, c1.y, c1.z],
+      [c2.x, c2.y, c2.z], [c3.x, c3.y, c3.z],
+    ],
+    normal: [n.x, n.y, n.z],
+    uvs: [
+      [uvs[0][0], uvs[0][1]], [uvs[1][0], uvs[1][1]],
+      [uvs[2][0], uvs[2][1]], [uvs[3][0], uvs[3][1]],
+    ],
+    blockKey,
+    removed: false,
+  });
+}
+
+const AXIS_X = new THREE.Vector3(1, 0, 0);
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+const AXIS_Z = new THREE.Vector3(0, 0, 1);
+
+function isFullCubeElement(el) {
+  return !el.rotation &&
+    el.from[0] === 0 && el.from[1] === 0 && el.from[2] === 0 &&
+    el.to[0] === 16 && el.to[1] === 16 && el.to[2] === 16 &&
+    el.faces && el.faces.up && el.faces.down &&
+    el.faces.north && el.faces.south && el.faces.east && el.faces.west;
+}
+
+function isFlatElement(el) {
+  return el.from[0] === el.to[0] || el.from[1] === el.to[1] || el.from[2] === el.to[2];
+}
+
+function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey) {
+  const from = el.from;
+  const to = el.to;
+  const f = [from[0] / 16, from[1] / 16, from[2] / 16];
+  const t = [to[0] / 16, to[1] / 16, to[2] / 16];
+
+  const flat = isFlatElement(el);
+
+  let elQuat = null, elOrigin = null;
+  if (el.rotation) {
+    elOrigin = new THREE.Vector3(el.rotation.origin[0] / 16, el.rotation.origin[1] / 16, el.rotation.origin[2] / 16);
+    const axis = el.rotation.axis;
+    const angle = THREE.MathUtils.degToRad(el.rotation.angle || 0);
+    elQuat = new THREE.Quaternion().setFromAxisAngle(
+      axis === 'x' ? AXIS_X : axis === 'y' ? AXIS_Y : AXIS_Z, angle);
+  }
+
+  for (const faceName of FACE_NAMES) {
     if (!el.faces || !el.faces[faceName]) continue;
+    if (skipFaces && skipFaces.has(faceName)) continue;
+
     const face = el.faces[faceName];
     const texPath = resolveTexture(face.texture, modelTextures);
-    const texture = getTexture(texPath);
+    const material = overrideMaterial || getBlockMaterial(texPath, face.tintindex, translucent, flat);
+    const bucket = getBucket(material);
 
-    // MeshLambertMaterial is much cheaper than MeshStandardMaterial.
-    // It supports map, normalMap, aoMap, emissive, and vertex colors, but
-    // skips the PBR specular/roughness/metalness path entirely.
-    const material = new THREE.MeshLambertMaterial({
-      map: texture, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide,
-    });
-    if (face.tintindex !== undefined) material.color = getTintForBlock(blockIdForTint, face.tintindex);
-
-    const isAnimated = !!texture.userData?.frameCount;
-    const isMagenta = texture === magentaTex;
-    if (!isAnimated && !isMagenta) {
-      attachNormalMap(material, texPath);
-    }
-
-    let rawUv = face.uv ? [...face.uv] : getDefaultUV(faceName, el.from, el.to);
+    const rawUv = face.uv ? face.uv : getDefaultUV(faceName, from, to);
     const u1 = rawUv[0] / 16, v1 = 1 - rawUv[1] / 16, u2 = rawUv[2] / 16, v2 = 1 - rawUv[3] / 16;
 
     let quadUVs;
@@ -869,64 +1033,182 @@ async function buildElementFaceMeshes(el, modelTextures, blockIdForTint) {
     const rot = (face.rotation || 0) % 360;
     for (let i = 0; i < rot / 90; i++) quadUVs.push(quadUVs.shift());
 
-    const corners = FACE_DEFS[faceName].corners(from, to);
-    const normal = FACE_DEFS[faceName].normal;
-    const positions = [], normals = [], uvs = [];
+    const def = FACE_DEFS[faceName];
+    const c = def.corners(f, t);
+
+    _qn.set(def.normal[0], def.normal[1], def.normal[2]);
+    if (elQuat) _qn.applyQuaternion(elQuat);
+    _qn.applyQuaternion(q);
+
+    const quad = [_qc0, _qc1, _qc2, _qc3];
     for (let i = 0; i < 4; i++) {
-      positions.push(...corners[i]);
-      normals.push(...normal);
-      uvs.push(quadUVs[i][0], quadUVs[i][1]);
+      const v = quad[i];
+      v.set(c[i][0], c[i][1], c[i][2]);
+      if (elQuat) v.sub(elOrigin).applyQuaternion(elQuat).add(elOrigin);
+      v.applyQuaternion(q).add(offset);
     }
-    const indices = [0, 1, 2, 0, 2, 3];
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    geometry.setIndex(indices);
-
-    let cx = 0, cy = 0, cz = 0;
-    for (const c of corners) { cx += c[0]; cy += c[1]; cz += c[2]; }
-    cx /= 4; cy /= 4; cz /= 4;
-
-    if (el.rotation) {
-      const origin = el.rotation.origin.map(v => v / 16);
-      const axis = el.rotation.axis;
-      const angle = THREE.MathUtils.degToRad(el.rotation.angle || 0);
-      const q = new THREE.Quaternion().setFromAxisAngle(
-        axis === 'x' ? new THREE.Vector3(1,0,0) : axis === 'y' ? new THREE.Vector3(0,1,0) : new THREE.Vector3(0,0,1),
-        angle
-      );
-      geometry.translate(-origin[0], -origin[1], -origin[2]);
-      geometry.applyQuaternion(q);
-      geometry.translate(origin[0], origin[1], origin[2]);
-      const cv = new THREE.Vector3(cx, cy, cz);
-      const o = new THREE.Vector3(...origin);
-      cv.sub(o).applyQuaternion(q).add(o);
-      cx = cv.x; cy = cv.y; cz = cv.z;
-      const nv = new THREE.Vector3(...normal).applyQuaternion(q);
-      result.push({ geometry, material, normal: [nv.x, nv.y, nv.z], center: [cx, cy, cz] });
-    } else {
-      result.push({ geometry, material, normal, center: [cx, cy, cz] });
-    }
+    pushQuad(bucket, quad[0], quad[1], quad[2], quad[3], _qn, quadUVs, blockKey);
   }
-  return result;
 }
 
-async function buildModelGroup(model, blockId, materialOverride = null) {
-  const group = new THREE.Group();
-  if (!model || !model.elements) return group;
-  for (const el of model.elements) {
-    const faceMeshes = await buildElementFaceMeshes(el, model.textures || {}, blockId);
-    for (const fm of faceMeshes) {
-      const mesh = new THREE.Mesh(fm.geometry, materialOverride || fm.material);
-      mesh.userData.faceNormal = new THREE.Vector3(...fm.normal);
-      mesh.userData.faceCenter = new THREE.Vector3(...fm.center);
-      group.add(mesh);
-      if (!materialOverride) cullableMeshes.add(mesh);
+function entriesAreOpaqueCube(entries) {
+  if (!entries || entries.length === 0) return false;
+  for (const entry of entries) {
+    if (entry.x || entry.y) return false;
+    const data = entry.data;
+    if (!data || !data.elements || data.elements.length !== 1) return false;
+    if (!isFullCubeElement(data.elements[0])) return false;
+  }
+  return true;
+}
+
+async function collectBlockFaces(info, opaquePositions) {
+  const { id, pos, entries } = info;
+  if (!entries || entries.length === 0) return;
+
+  const shaderConfig = await getShaderConfigForBlock(id);
+  let overrideMaterial = null;
+  if (shaderConfig) overrideMaterial = await createMCShaderMaterial(shaderConfig);
+
+  const translucent = isTranslucentBlock(id);
+  const selfOpaque = !shaderConfig && entriesAreOpaqueCube(entries);
+  const blockKey = `${pos.x},${pos.y},${pos.z}`;
+
+  for (const entry of entries) {
+    const data = entry.data;
+    if (!data || !data.elements) continue;
+
+    const rotX = entry.x || 0, rotY = entry.y || 0;
+    const q = new THREE.Quaternion();
+    if (rotX || rotY) {
+      q.setFromEuler(new THREE.Euler(
+        THREE.MathUtils.degToRad(-rotX),
+        THREE.MathUtils.degToRad(-rotY),
+        0, 'XYZ'));
+    }
+    const half = new THREE.Vector3(0.5, 0.5, 0.5).applyQuaternion(q);
+    const offset = new THREE.Vector3(pos.x + 1, pos.y + 1, pos.z + 1).sub(half);
+
+    for (const el of data.elements) {
+      let skipFaces = null;
+      if (selfOpaque && isFullCubeElement(el)) {
+        for (const fn of FACE_NAMES) {
+          const d = FACE_DIRS[fn];
+          if (opaquePositions.has(`${pos.x + d[0]},${pos.y + d[1]},${pos.z + d[2]}`)) {
+            (skipFaces || (skipFaces = new Set())).add(fn);
+          }
+        }
+      }
+      collectElementFaces(el, data.textures || {}, id, q, offset, skipFaces, overrideMaterial, translucent, blockKey);
     }
   }
-  return group;
+}
+
+/* ============================= COINCIDENT FACE DEDUPLICATION ============================= */
+
+const _R = (n) => Math.round(n * 4096) / 4096;
+
+function faceCanonicalKey(face, materialId) {
+  const corners = [
+    [ _R(face.corners[0][0]), _R(face.corners[0][1]), _R(face.corners[0][2]) ],
+    [ _R(face.corners[1][0]), _R(face.corners[1][1]), _R(face.corners[1][2]) ],
+    [ _R(face.corners[2][0]), _R(face.corners[2][1]), _R(face.corners[2][2]) ],
+    [ _R(face.corners[3][0]), _R(face.corners[3][1]), _R(face.corners[3][2]) ],
+  ];
+  corners.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+
+  const uvs = [
+    [ _R(face.uvs[0][0]), _R(face.uvs[0][1]) ],
+    [ _R(face.uvs[1][0]), _R(face.uvs[1][1]) ],
+    [ _R(face.uvs[2][0]), _R(face.uvs[2][1]) ],
+    [ _R(face.uvs[3][0]), _R(face.uvs[3][1]) ],
+  ];
+  uvs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
+  return materialId + '|' +
+    corners.map(c => c.join(',')).join(';') + '|' +
+    uvs.map(u => u.join(',')).join(';');
+}
+
+function dedupeCoincidentFaces() {
+  if (!CONFIG.render.dedupeCoincidentFaces) return 0;
+  const groups = new Map();
+  for (const bucket of materialBuckets.values()) {
+    const matId = bucket.material.uuid;
+    for (const face of bucket.faces) {
+      if (face.removed) continue;
+      const key = faceCanonicalKey(face, matId);
+      let arr = groups.get(key);
+      if (!arr) { arr = []; groups.set(key, arr); }
+      arr.push(face);
+    }
+  }
+  let removed = 0;
+  for (const arr of groups.values()) {
+    if (arr.length < 2) continue;
+
+    const blockKeys = new Set();
+    for (const f of arr) blockKeys.add(f.blockKey);
+
+    if (blockKeys.size >= 2) {
+      for (const f of arr) {
+        if (!f.removed) { f.removed = true; removed++; }
+      }
+    } else {
+      let kept = false;
+      for (const f of arr) {
+        if (!kept) { kept = true; continue; }
+        if (!f.removed) { f.removed = true; removed++; }
+      }
+    }
+  }
+  return removed;
+}
+
+/* ============================= FLUSH ============================= */
+
+function flushBuckets() {
+  const culled = dedupeCoincidentFaces();
+  if (culled > 0) console.log(`Deduplicated ${culled} coincident faces`);
+
+  let meshCount = 0, totalFaces = 0;
+  for (const bucket of materialBuckets.values()) {
+    const positions = [], normals = [], uvs = [], indices = [];
+    let vCount = 0;
+    for (const face of bucket.faces) {
+      if (face.removed) continue;
+      const c = face.corners, u = face.uvs, n = face.normal;
+      for (let i = 0; i < 4; i++) {
+        positions.push(c[i][0], c[i][1], c[i][2]);
+        normals.push(n[0], n[1], n[2]);
+        uvs.push(u[i][0], u[i][1]);
+      }
+      indices.push(vCount, vCount + 1, vCount + 2, vCount, vCount + 2, vCount + 3);
+      vCount += 4;
+      totalFaces++;
+    }
+    if (vCount === 0) continue;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setIndex(indices);
+    g.computeBoundingSphere();
+    const mesh = new THREE.Mesh(g, bucket.material);
+    worldGroup.add(mesh);
+    meshCount++;
+  }
+  materialBuckets.clear();
+  console.log(`Flushed ${meshCount} merged meshes (${totalFaces} faces)`);
+}
+
+function clearWorld() {
+  for (const c of [...worldGroup.children]) {
+    worldGroup.remove(c);
+    if (c.geometry) c.geometry.dispose();
+  }
+  materialBuckets.clear();
 }
 
 /* ============================= MODEL SELECTION ============================= */
@@ -988,80 +1270,6 @@ function matchesCondition(cond, props) {
   return true;
 }
 
-async function createBlockGroup(blockId, properties, pos) {
-  const shaderConfig = await getShaderConfigForBlock(blockId);
-  if (shaderConfig) {
-    const material = await createMCShaderMaterial(shaderConfig);
-    const modelEntries = await getBlockModels(blockId, properties, pos);
-    const group = new THREE.Group();
-    if (modelEntries.length === 0) {
-      const geom = new THREE.BoxGeometry(1, 1, 1);
-      geom.translate(0.5, 0.5, 0.5);
-      group.add(new THREE.Mesh(geom, material));
-      return group;
-    }
-    for (const entry of modelEntries) {
-      const modelGroup = await buildModelGroup(entry.data, blockId, material);
-      const rotX = entry.x || 0, rotY = entry.y || 0;
-      if (rotX !== 0 || rotY !== 0) {
-        const pivot = new THREE.Group();
-        pivot.position.set(0.5, 0.5, 0.5);
-        modelGroup.position.set(-0.5, -0.5, -0.5);
-        pivot.add(modelGroup);
-        pivot.rotation.y = THREE.MathUtils.degToRad(-rotY);
-        pivot.rotation.x = THREE.MathUtils.degToRad(-rotX);
-        group.add(pivot);
-      } else group.add(modelGroup);
-    }
-    return group;
-  }
-
-  const modelEntries = await getBlockModels(blockId, properties, pos);
-  const group = new THREE.Group();
-  if (modelEntries.length === 0) {
-    const tex = getTexture(`block/${blockId}`);
-    const mat = new THREE.MeshLambertMaterial({ map: tex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide });
-    group.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1), mat));
-    return group;
-  }
-  for (const entry of modelEntries) {
-    const modelGroup = await buildModelGroup(entry.data, blockId);
-    const rotX = entry.x || 0, rotY = entry.y || 0;
-    if (rotX !== 0 || rotY !== 0) {
-      const pivot = new THREE.Group();
-      pivot.position.set(0.5, 0.5, 0.5);
-      modelGroup.position.set(-0.5, -0.5, -0.5);
-      pivot.add(modelGroup);
-      pivot.rotation.y = THREE.MathUtils.degToRad(-rotY);
-      pivot.rotation.x = THREE.MathUtils.degToRad(-rotX);
-      group.add(pivot);
-    } else group.add(modelGroup);
-  }
-  if (group.children.length === 0) {
-    const tex = getTexture(`block/${blockId}`);
-    const mat = new THREE.MeshLambertMaterial({ map: tex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide });
-    group.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1), mat));
-  }
-  return group;
-}
-
-/* ============================= FACE VISIBILITY ============================= */
-
-const _cullQ = new THREE.Quaternion(), _cullP = new THREE.Vector3(), _cullN = new THREE.Vector3();
-const _cullToCam = new THREE.Vector3(), _cullCamPos = new THREE.Vector3();
-
-function updateFaceVisibility() {
-  _cullCamPos.copy(camera.position);
-  for (const mesh of cullableMeshes) {
-    _cullP.copy(mesh.userData.faceCenter);
-    mesh.localToWorld(_cullP);
-    mesh.getWorldQuaternion(_cullQ);
-    _cullN.copy(mesh.userData.faceNormal).applyQuaternion(_cullQ);
-    _cullToCam.copy(_cullCamPos).sub(_cullP);
-    mesh.visible = _cullN.dot(_cullToCam) > 0;
-  }
-}
-
 /* ============================= COMMANDS ============================= */
 
 function loadCommandsFromStorage() {
@@ -1076,20 +1284,14 @@ function parseBlockSpec(spec) {
   const bracket = spec.indexOf('[');
   if (bracket !== -1) {
     id = spec.substring(0, bracket);
-    const propStr = spec.substring(bracket+1, spec.length-1);
-    for (const pair of propStr.split(',')) { const [k,v] = pair.split('='); if (k && v) props[k.trim()] = v.trim(); }
+    const propStr = spec.substring(bracket + 1, spec.length - 1);
+    for (const pair of propStr.split(',')) { const [k, v] = pair.split('='); if (k && v) props[k.trim()] = v.trim(); }
   }
   return [id, props];
 }
 
 async function build() {
-  scene.children.filter(c =>
-    !(c instanceof THREE.AmbientLight) && !(c instanceof THREE.DirectionalLight) &&
-    c !== sunLight.target &&
-    c !== gridHelper && c !== skyMesh && c !== sunMesh && c !== moonMesh && c !== starContainer
-  ).forEach(c => scene.remove(c));
-  worldBlocks.clear();
-  cullableMeshes.clear();
+  clearWorld();
   errorOverlay.textContent = ''; errorOverlay.style.display = 'none';
   await loadColormaps();
 
@@ -1099,7 +1301,7 @@ async function build() {
     const parts = line.match(/\S+/g) || []; if (parts.length === 0) continue;
     const cmd = parts[0].toLowerCase();
     if (cmd === '/setblock' && parts.length >= 5) {
-      placementMap.set(`${parseFloat(parts[1])},${parseFloat(parts[2])},${parseFloat(parts[3])}`, parts[4].toLowerCase().replace('minecraft:',''));
+      placementMap.set(`${parseFloat(parts[1])},${parseFloat(parts[2])},${parseFloat(parts[3])}`, parts[4].toLowerCase().replace('minecraft:', ''));
     } else if (cmd === '/fill' && parts.length >= 8) {
       const x1 = Math.min(parseFloat(parts[1]), parseFloat(parts[4]));
       const x2 = Math.max(parseFloat(parts[1]), parseFloat(parts[4]));
@@ -1107,29 +1309,47 @@ async function build() {
       const y2 = Math.max(parseFloat(parts[2]), parseFloat(parts[5]));
       const z1 = Math.min(parseFloat(parts[3]), parseFloat(parts[6]));
       const z2 = Math.max(parseFloat(parts[3]), parseFloat(parts[6]));
-      const spec = parts[7].toLowerCase().replace('minecraft:','');
+      const spec = parts[7].toLowerCase().replace('minecraft:', '');
       for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) for (let z = z1; z <= z2; z++) {
         placementMap.set(`${x},${y},${z}`, spec);
       }
     }
   }
 
-  for (const [key, spec] of placementMap) {
+  const concurrency = Math.max(1, CONFIG.render.concurrency || 12);
+  const entries = Array.from(placementMap.entries());
+  const t0 = performance.now();
+
+  /* ---- pass 1: resolve models in parallel ---- */
+  const blockInfo = new Map();
+  const opaquePositions = new Set();
+
+  const { errors: resolveErrors } = await mapWithConcurrency(entries, concurrency, async ([key, spec]) => {
     const [id, props] = parseBlockSpec(spec);
-    worldBlocks.set(key, { id, properties: props, group: null });
-  }
-  for (const [key, spec] of placementMap) {
     const [xStr, yStr, zStr] = key.split(',');
-    const x = parseInt(xStr, 10), y = parseInt(yStr, 10), z = parseInt(zStr, 10);
-    const [id, props] = parseBlockSpec(spec);
-    try {
-      const group = await createBlockGroup(id, props, { x, y, z });
-      group.position.set(x + 0.5, y + 0.5, z + 0.5);
-      scene.add(group);
-      worldBlocks.get(key).group = group;
-    } catch (err) { showError(`Failed to place ${id}: ${err.message}`); console.error(err); }
-  }
-  console.log('Build complete');
+    const pos = { x: parseInt(xStr, 10), y: parseInt(yStr, 10), z: parseInt(zStr, 10) };
+    const modelEntries = await getBlockModels(id, props, pos);
+    blockInfo.set(key, { id, pos, entries: modelEntries });
+    if (!SHADER_BLOCK_IDS.has(id) && !isTranslucentBlock(id) && entriesAreOpaqueCube(modelEntries)) {
+      opaquePositions.add(key);
+    }
+  });
+  const t1 = performance.now();
+  for (const e of resolveErrors) showError(`Failed to resolve: ${e.error.message}`);
+  console.log(`Pass 1 (resolve): ${blockInfo.size}/${entries.length} blocks in ${(t1 - t0).toFixed(0)} ms`);
+
+  /* ---- pass 2: emit geometry in parallel ---- */
+  const infos = Array.from(blockInfo.values());
+  const { errors: emitErrors } = await mapWithConcurrency(infos, concurrency, async (info) => {
+    await collectBlockFaces(info, opaquePositions);
+  });
+  const t2 = performance.now();
+  for (const e of emitErrors) showError(`Failed to place ${e.item.id}: ${e.error.message}`);
+  console.log(`Pass 2 (emit): ${infos.length} blocks in ${(t2 - t1).toFixed(0)} ms`);
+
+  flushBuckets();
+  const t3 = performance.now();
+  console.log(`Build complete: ${placementMap.size} blocks in ${(t3 - t0).toFixed(0)} ms total`);
 }
 
 /* ============================= ANIMATION ============================= */
@@ -1154,6 +1374,26 @@ function updateSky(delta) {
   skyMesh.position.copy(camera.position);
 }
 
+const _orientMat = new THREE.Matrix4();
+const _orientX = new THREE.Vector3();
+const _orientY = new THREE.Vector3();
+const _orientZ = new THREE.Vector3();
+
+function orientCelestial(mesh, angle) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const nx = -c, ny = -s, nz = 0;
+  const ux = -s, uy = c, uz = 0;
+  const rx = uy * nz - uz * ny;
+  const ry = uz * nx - ux * nz;
+  const rz = ux * ny - uy * nx;
+  _orientX.set(rx, ry, rz);
+  _orientY.set(ux, uy, uz);
+  _orientZ.set(nx, ny, nz);
+  _orientMat.makeBasis(_orientX, _orientY, _orientZ);
+  mesh.quaternion.setFromRotationMatrix(_orientMat);
+}
+
 function updateCelestialBodies(delta) {
   if (!sunMesh && !moonMesh && !starMesh) return;
   dayElapsed += delta;
@@ -1164,14 +1404,15 @@ function updateCelestialBodies(delta) {
     const sunX = Math.cos(angle) * CONFIG.sun.distance;
     const sunY = Math.sin(angle) * CONFIG.sun.distance;
     sunMesh.position.set(camera.position.x + sunX, camera.position.y + sunY, camera.position.z);
-    sunMesh.lookAt(camera.position);
+    orientCelestial(sunMesh, angle);
     sunMesh.visible = true;
   }
   if (moonMesh) {
-    const moonX = Math.cos(angle + Math.PI) * CONFIG.moon.distance;
-    const moonY = Math.sin(angle + Math.PI) * CONFIG.moon.distance;
+    const moonAngle = angle + Math.PI;
+    const moonX = Math.cos(moonAngle) * CONFIG.moon.distance;
+    const moonY = Math.sin(moonAngle) * CONFIG.moon.distance;
     moonMesh.position.set(camera.position.x + moonX, camera.position.y + moonY, camera.position.z);
-    moonMesh.lookAt(camera.position);
+    orientCelestial(moonMesh, moonAngle);
     moonMesh.visible = true;
     const dayCount = Math.floor(dayElapsed / CONFIG.dayCycle.cycleSeconds);
     const phaseIndex = ((CONFIG.moon.startingPhase + dayCount) % CONFIG.moon.phaseFiles.length + CONFIG.moon.phaseFiles.length) % CONFIG.moon.phaseFiles.length;
@@ -1242,14 +1483,49 @@ function animate() {
   updateSky(delta);
   updateCelestialBodies(delta);
   updateLighting();
-  updateFaceVisibility();
   controls.update();
   renderer.render(scene, camera);
 }
 
+/* ============================= SHA REFRESH ============================= */
+
+async function forceRefreshSha() {
+  localStorage.removeItem(SHA_KEY);
+  textureCache.clear(); normalMapCache.clear(); normalMapPending.clear();
+  modelCache.clear(); modelPending.clear();
+  blockstateCache.clear(); blockstatePending.clear();
+  defaultPropsCache.clear();
+  shaderSourceCache.clear(); shaderMaterialCache.clear(); shaderMaterialPending.clear();
+  blockMaterialCache.clear();
+  materialBuckets.clear();
+  tintColorCache.clear();
+  grassColormap = null; foliageColormap = null;
+  grassColormapData = null; foliageColormapData = null;
+  animatedTextures.length = 0; timeUniforms.length = 0;
+  clearWorld();
+
+  if (skyMesh) { scene.remove(skyMesh); skyMesh.geometry.dispose(); skyMaterial.dispose(); skyMesh = null; skyMaterial = null; skyTexture = null; }
+  if (starContainer) { scene.remove(starContainer); starMesh.geometry.dispose(); starMesh.material.dispose(); starContainer = null; starMesh = null; }
+  if (sunMesh) { scene.remove(sunMesh); sunMesh.geometry.dispose(); sunMesh.material.dispose(); sunMesh = null; }
+  if (moonMesh) { scene.remove(moonMesh); moonMesh.geometry.dispose(); moonMesh.material.dispose(); moonMesh = null; }
+  moonTextures = [];
+  currentMoonPhaseIndex = -1;
+  skyElapsed = 0; dayElapsed = 0;
+
+  const sha = await fetchLatestCommitSha();
+  ASSET_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}/minecraft`;
+  REPO_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}`;
+  console.log('Refreshed asset base:', ASSET_BASE);
+  await loadConfig();
+  await setupSky();
+  await setupCelestialBodies();
+  await setupStars();
+  await build();
+}
+
 document.getElementById('renderBtn').addEventListener('click', () => { saveCommandsToStorage(); build(); });
 document.getElementById('refreshShaBtn').addEventListener('click', () => { forceRefreshSha(); });
-window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 
 (async () => {
   const sha = await fetchLatestCommitSha();
