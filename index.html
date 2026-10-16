@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>Voxel Builder — Java Edition</title>
+  <style>
+    :root { --bg:#071014; --panel: rgba(255,255,255,0.03); --accent:#39ff14; --muted: rgba(255,255,255,0.6); --glass: rgba(255,255,255,0.03); --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; }
+    html, body { height:100%; margin:0; background:var(--bg); color:var(--muted); font-family:Inter,system-ui; overflow: hidden; }
+    .app { height:100%; display:flex; flex-direction:column; touch-action:none; }
+    .top { padding:10px; display:flex; gap:8px; align-items:flex-start; background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent); z-index: 10; }
+    textarea.cmd { flex:1; min-height:48px; max-height:96px; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.04); background:var(--panel); color:#eaffea; font-family:var(--mono); font-size:14px; resize:none; box-shadow: 0 6px 30px rgba(0,0,0,0.35); }
+    .controls { display:flex; flex-direction:column; gap:8px; }
+    .btn { border-radius:10px; padding:10px 12px; background:rgba(255,255,255,0.03); color:var(--accent); border:1px solid rgba(57, 255, 20, 0.2); font-weight:700; cursor: pointer; text-transform: uppercase; font-size: 11px; }
+    .btn.secondary { color: #ff9999; border-color: rgba(255,100,100,0.3); }
+    .viewer { flex:1; position:relative; }
+    #webgl-canvas { display:block; width:100%; height:100%; }
+    .hud { position:absolute; left:12px; bottom:12px; padding:8px 10px; border-radius:10px; background:var(--glass); font-size:12px; backdrop-filter: blur(6px); pointer-events:none; }
+    .error-overlay { position:absolute; top:10px; right:10px; max-width:400px; max-height:300px; overflow:auto; background:rgba(255,0,0,0.1); border:1px solid rgba(255,0,0,0.3); border-radius:8px; padding:8px; font-size:12px; color:#ff9999; display:none; z-index:20; white-space:pre-wrap; word-break:break-all; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <textarea id="commands" class="cmd" placeholder="/setblock 0 0 0 end_portal&#10;/setblock 1 0 0 stone&#10;/fill 2 0 0 4 2 2 stone"></textarea>
+    <div class="controls">
+      <button id="renderBtn" class="btn">Build</button>
+      <button id="refreshShaBtn" class="btn secondary">Refresh SHA</button>
+    </div>
+  </div>
+  <div class="viewer">
+    <canvas id="webgl-canvas"></canvas>
+    <div class="hud">Build with: /setblock x y z block_id[prop=val,...] • /fill x1 y1 z1 x2 y2 z2 block_id[prop=val,...]</div>
+    <div id="errorOverlay" class="error-overlay"></div>
+  </div>
+</div>
+
+<script type="importmap">
+  { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const errorOverlay = document.getElementById('errorOverlay');
+function showError(msg) { errorOverlay.style.display = 'block'; errorOverlay.textContent += msg + '\n'; }
+window.addEventListener('error', (e) => showError(`Uncaught: ${e.message}`));
+window.addEventListener('unhandledrejection', (e) => showError(`Promise rejection: ${e.reason}`));
+
+const REPO = 'Chernuga/viewer-assets';
+const BRANCH = 'main';
+const SHA_KEY = 'viewerAssetsShaShaderTest';
+let ASSET_BASE = '';
+let REPO_BASE = '';
+let CONFIG = null;
+
+const CONFIG_DEFAULTS = {
+  sky: { stateCount: 8, stateDuration: 10, holdFraction: 0.0, brightness: 1.3, saturation: 1.0 },
+  sun: { enabled: true, size: 200, distance: 700, texturePath: 'environment/celestial/sun.png' },
+  moon: {
+    enabled: true, size: 200, distance: 700, startingPhase: 0,
+    phaseFiles: [
+      'environment/celestial/moon/full_moon.png',
+      'environment/celestial/moon/waning_gibbous.png',
+      'environment/celestial/moon/third_quarter.png',
+      'environment/celestial/moon/waning_crescent.png',
+      'environment/celestial/moon/new_moon.png',
+      'environment/celestial/moon/waxing_crescent.png',
+      'environment/celestial/moon/first_quarter.png',
+      'environment/celestial/moon/waxing_gibbous.png',
+    ],
+  },
+  dayCycle: { startAnglePi: 0.25, cycleSeconds: null },
+  stars: {
+    enabled: true, distance: 1000, attempts: 1500, sizeScale: 0.001,
+    opacityMin: 0.4, opacityMax: 0.9, blinkSpeed: 2.0, blinkAmount: 0.4,
+  },
+  animation: { shaderSpeed: 0.0001 },
+  render: {
+    normalMap: true,
+    normalStrength: 0.9,
+    normalEdgeBoost: 3.0,
+    minContrast: 0.03,
+  },
+  lighting: {
+    ambientDay: 0.55, ambientNight: 0.30,
+    sunColor: '#fff3d6', sunIntensity: 1.2,
+    moonColor: '#8fa3c8', moonIntensity: 0.4,
+    horizonFadeAngle: 0.2,
+  },
+};
+
+function mergeConfig(defaults, loaded) {
+  const out = {};
+  for (const section in defaults) {
+    if (typeof defaults[section] === 'object' && !Array.isArray(defaults[section])) {
+      out[section] = { ...defaults[section], ...(loaded?.[section] || {}) };
+    } else {
+      out[section] = loaded?.[section] ?? defaults[section];
+    }
+  }
+  for (const section in (loaded || {})) if (!out[section]) out[section] = loaded[section];
+  return out;
+}
+
+async function loadConfig() {
+  try {
+    const res = await fetch(`${REPO_BASE}/viewer/config.json`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const loaded = await res.json();
+    CONFIG = mergeConfig(CONFIG_DEFAULTS, loaded);
+    console.log('Viewer config loaded from repo');
+  } catch (err) {
+    console.warn('Viewer config not found, using defaults:', err);
+    CONFIG = mergeConfig(CONFIG_DEFAULTS, {});
+  }
+  if (CONFIG.dayCycle.cycleSeconds == null) {
+    CONFIG.dayCycle.cycleSeconds = CONFIG.sky.stateCount * CONFIG.sky.stateDuration;
+  }
+  CONFIG.dayCycle.startAngleRadians = Math.PI * CONFIG.dayCycle.startAnglePi;
+  CONFIG.lighting.sunColorObj = new THREE.Color(CONFIG.lighting.sunColor);
+  CONFIG.lighting.moonColorObj = new THREE.Color(CONFIG.lighting.moonColor);
+  console.log('Effective config:', CONFIG);
+}
+
+async function fetchLatestCommitSha() {
+  const cached = localStorage.getItem(SHA_KEY);
+  if (cached) { console.log('Using cached SHA:', cached); return cached; }
+  try {
+    const res = await fetch(`https://api.github.com/repos/${REPO}/commits/${BRANCH}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    localStorage.setItem(SHA_KEY, data.sha);
+    return data.sha;
+  } catch (err) { console.warn('SHA fetch failed', err); return BRANCH; }
+}
+
+async function forceRefreshSha() {
+  localStorage.removeItem(SHA_KEY);
+  textureCache.clear(); normalMapCache.clear(); normalMapPending.clear();
+  modelCache.clear(); blockstateCache.clear(); defaultPropsCache.clear();
+  shaderSourceCache.clear(); shaderMaterialCache.clear();
+  animatedTextures.length = 0; timeUniforms.length = 0; cullableMeshes.clear();
+  if (skyMesh) { scene.remove(skyMesh); skyMesh.geometry.dispose(); skyMaterial.dispose(); skyMesh = null; skyMaterial = null; skyTexture = null; }
+  if (starContainer) { scene.remove(starContainer); starMesh.geometry.dispose(); starMesh.material.dispose(); starContainer = null; starMesh = null; }
+  if (sunMesh) { scene.remove(sunMesh); sunMesh.geometry.dispose(); sunMesh.material.dispose(); sunMesh = null; }
+  if (moonMesh) { scene.remove(moonMesh); moonMesh.geometry.dispose(); moonMesh.material.dispose(); moonMesh = null; }
+  moonTextures = [];
+  currentMoonPhaseIndex = -1;
+  skyElapsed = 0; dayElapsed = 0;
+  const sha = await fetchLatestCommitSha();
+  ASSET_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}/minecraft`;
+  REPO_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}`;
+  console.log('Refreshed asset base:', ASSET_BASE);
+  await loadConfig();
+  await setupSky();
+  await setupCelestialBodies();
+  await setupStars();
+  await build();
+}
+
+const canvas = document.getElementById('webgl-canvas');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x071014);
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 5000);
+camera.position.set(6, 6, 6);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
+scene.add(ambientLight);
+const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+scene.add(sunLight);
+scene.add(sunLight.target);
+
+const gridHelper = new THREE.GridHelper(100, 100, 0x39ff14, 0x39ff14);
+gridHelper.position.set(0.5, 0.5, 0.5);
+gridHelper.material.opacity = 0.1; gridHelper.material.transparent = true;
+scene.add(gridHelper);
+
+const controls = new OrbitControls(camera, canvas);
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+
+const textureCache = new Map();
+const normalMapCache = new Map();
+const normalMapPending = new Map();
+const modelCache = new Map();
+const blockstateCache = new Map();
+const defaultPropsCache = new Map();
+const shaderSourceCache = new Map();
+const shaderMaterialCache = new Map();
+const timeUniforms = [];
+const worldBlocks = new Map();
+const animatedTextures = [];
+const cullableMeshes = new Set();
+const magentaTex = new THREE.DataTexture(new Uint8Array([255,0,255,255]), 1, 1, THREE.RGBAFormat);
+magentaTex.needsUpdate = true;
+
+let skyTexture = null;
+let skyMesh = null;
+let skyMaterial = null;
+let skyElapsed = 0;
+let sunMesh = null;
+let moonMesh = null;
+let moonTextures = [];
+let currentMoonPhaseIndex = -1;
+let dayElapsed = 0;
+let starContainer = null;
+let starMesh = null;
+
+/* ============================= JAVA-COMPATIBLE RNG ============================= */
+
+class JavaRandom {
+  constructor(seed) { this.seed = (BigInt(seed) ^ 0x5DEECE66Dn) & 0xFFFFFFFFFFFFn; }
+  next(bits) {
+    this.seed = (this.seed * 0x5DEECE66Dn + 0xBn) & 0xFFFFFFFFFFFFn;
+    return Number(this.seed >> BigInt(48 - bits));
+  }
+  nextFloat() { return this.next(24) / (1 << 24); }
+  nextDouble() {
+    const high = this.next(26);
+    const low = this.next(27);
+    return (high * Math.pow(2, 27) + low) / Math.pow(2, 53);
+  }
+}
+
+/* ============================= SHADER LOADING ============================= */
+
+async function loadShaderFile(relPath) {
+  if (shaderSourceCache.has(relPath)) return shaderSourceCache.get(relPath);
+  const url = `${ASSET_BASE}/shaders/${relPath}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Shader not found: ${relPath} (${res.status})`);
+  const text = await res.text();
+  shaderSourceCache.set(relPath, text);
+  return text;
+}
+
+async function loadPlainShader(vshPath, fshPath, uniforms, options = {}) {
+  const [vsh, fsh] = await Promise.all([loadShaderFile(vshPath), loadShaderFile(fshPath)]);
+  return new THREE.ShaderMaterial({ uniforms, vertexShader: vsh, fragmentShader: fsh, ...options });
+}
+
+/* ============================= SKY ============================= */
+
+async function loadSkyTexture() {
+  const url = `${ASSET_BASE}/textures/environment/sky.png`;
+  return new Promise((resolve) => {
+    new THREE.TextureLoader().load(url, (tex) => {
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.wrapS = THREE.MirroredRepeatWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      resolve(tex);
+    }, undefined, () => { showError(`Sky texture missing: ${url}`); resolve(magentaTex); });
+  });
+}
+
+async function setupSky() {
+  skyTexture = await loadSkyTexture();
+  skyMaterial = await loadPlainShader('viewer/sky.vsh', 'viewer/sky.fsh', {
+    skyTexture: { value: skyTexture },
+    currentState: { value: 0.0 },
+    nextState: { value: 1.0 },
+    blend: { value: 0.0 },
+    stateCount: { value: CONFIG.sky.stateCount },
+    brightness: { value: CONFIG.sky.brightness },
+    saturation: { value: CONFIG.sky.saturation },
+  }, { side: THREE.BackSide, depthWrite: false, depthTest: false });
+
+  const skyGeometry = new THREE.SphereGeometry(800, 64, 32, 0, Math.PI * 2, 0, Math.PI);
+  skyMesh = new THREE.Mesh(skyGeometry, skyMaterial);
+  skyMesh.renderOrder = -10;
+  skyMesh.frustumCulled = false;
+  scene.add(skyMesh);
+}
+
+/* ============================= SUN AND MOON ============================= */
+
+function loadCelestialTexture(path) {
+  const url = `${ASSET_BASE}/textures/${path}`;
+  return new Promise((resolve, reject) => {
+    new THREE.TextureLoader().load(url, (tex) => {
+      tex.magFilter = THREE.NearestFilter;
+      tex.minFilter = THREE.NearestFilter;
+      tex.generateMipmaps = false;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      resolve(tex);
+    }, undefined, () => reject(new Error(url)));
+  });
+}
+
+async function makeCelestialMaterial(texture) {
+  return loadPlainShader('viewer/celestial.vsh', 'viewer/celestial.fsh',
+    { tex: { value: texture } },
+    { transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide });
+}
+
+async function setupCelestialBodies() {
+  if (CONFIG.sun.enabled) {
+    try {
+      const sunTex = await loadCelestialTexture(CONFIG.sun.texturePath);
+      const geo = new THREE.PlaneGeometry(CONFIG.sun.size, CONFIG.sun.size);
+      sunMesh = new THREE.Mesh(geo, await makeCelestialMaterial(sunTex));
+      sunMesh.renderOrder = 0; sunMesh.frustumCulled = false;
+      scene.add(sunMesh);
+    } catch (err) { showError(`Sun texture missing: ${CONFIG.sun.texturePath}`); }
+  }
+  if (CONFIG.moon.enabled) {
+    moonTextures = new Array(CONFIG.moon.phaseFiles.length).fill(null);
+    for (let i = 0; i < CONFIG.moon.phaseFiles.length; i++) {
+      try { moonTextures[i] = await loadCelestialTexture(CONFIG.moon.phaseFiles[i]); }
+      catch (err) { showError(`Moon texture missing: ${CONFIG.moon.phaseFiles[i]}`); }
+    }
+    const startIndex = ((CONFIG.moon.startingPhase % CONFIG.moon.phaseFiles.length) + CONFIG.moon.phaseFiles.length) % CONFIG.moon.phaseFiles.length;
+    const startTex = moonTextures[startIndex] || magentaTex;
+    currentMoonPhaseIndex = startIndex;
+    const geo = new THREE.PlaneGeometry(CONFIG.moon.size, CONFIG.moon.size);
+    moonMesh = new THREE.Mesh(geo, await makeCelestialMaterial(startTex));
+    moonMesh.renderOrder = 0; moonMesh.frustumCulled = false;
+    scene.add(moonMesh);
+  }
+}
+
+/* ============================= STARS ============================= */
+
+function buildStarGeometry() {
+  const posRng = new JavaRandom(10842);
+  const attrRng = new JavaRandom(1337);
+  const positions = [], opacities = [], phases = [], indices = [];
+  let vertIndex = 0;
+  const scale = (CONFIG.stars.distance / 100) * CONFIG.stars.sizeScale;
+
+  for (let i = 0; i < CONFIG.stars.attempts; i++) {
+    let d0 = posRng.nextFloat() * 2 - 1;
+    let d1 = posRng.nextFloat() * 2 - 1;
+    let d2 = posRng.nextFloat() * 2 - 1;
+    const d3 = 0.15 + posRng.nextFloat() * 0.1;
+    let d4 = d0 * d0 + d1 * d1 + d2 * d2;
+    if (d4 < 1.0 && d4 > 0.01) {
+      d4 = 1.0 / Math.sqrt(d4);
+      d0 *= d4; d1 *= d4; d2 *= d4;
+      const d5 = d0 * 100, d6 = d1 * 100, d7 = d2 * 100;
+      const d8 = Math.atan2(d0, d2);
+      const d9 = Math.sin(d8), d10 = Math.cos(d8);
+      const d11 = Math.atan2(Math.sqrt(d0 * d0 + d2 * d2), d1);
+      const d12 = Math.sin(d11), d13 = Math.cos(d11);
+      const d14 = posRng.nextDouble() * Math.PI * 2;
+      const d15 = Math.sin(d14), d16 = Math.cos(d14);
+      const starOpacity = CONFIG.stars.opacityMin + attrRng.nextFloat() * (CONFIG.stars.opacityMax - CONFIG.stars.opacityMin);
+      const starPhase = attrRng.nextFloat() * Math.PI * 2;
+      for (let j = 0; j < 4; j++) {
+        const d18 = ((j & 2) - 1) * d3;
+        const d19 = ((j + 1 & 2) - 1) * d3;
+        const d21 = d18 * d16 - d19 * d15;
+        const d22 = d19 * d16 + d18 * d15;
+        const d23 = d21 * d12;
+        const d24 = -d21 * d13;
+        const d25 = d24 * d9 - d22 * d10;
+        const d26 = d22 * d9 + d24 * d10;
+        positions.push((d5 + d25) * scale, (d6 + d23) * scale, (d7 + d26) * scale);
+        opacities.push(starOpacity);
+        phases.push(starPhase);
+      }
+      indices.push(vertIndex, vertIndex + 1, vertIndex + 2, vertIndex, vertIndex + 2, vertIndex + 3);
+      vertIndex += 4;
+    }
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geom.setAttribute('starOpacity', new THREE.Float32BufferAttribute(opacities, 1));
+  geom.setAttribute('starPhase', new THREE.Float32BufferAttribute(phases, 1));
+  geom.setIndex(indices);
+  console.log(`Generated ${vertIndex / 4} stars`);
+  return geom;
+}
+
+async function setupStars() {
+  if (!CONFIG.stars.enabled) return;
+  const starGeometry = buildStarGeometry();
+  const starMaterial = await loadPlainShader('viewer/stars.vsh', 'viewer/stars.fsh', {
+    uTime: { value: 0 },
+    uNight: { value: 0 },
+    uBlinkSpeed: { value: CONFIG.stars.blinkSpeed },
+    uBlinkAmount: { value: CONFIG.stars.blinkAmount },
+  }, {
+    transparent: true, depthWrite: false, depthTest: true,
+    blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  });
+  starMesh = new THREE.Mesh(starGeometry, starMaterial);
+  starMesh.frustumCulled = false;
+  starMesh.visible = false;
+  starContainer = new THREE.Group();
+  starContainer.renderOrder = -5;
+  starContainer.add(starMesh);
+  scene.add(starContainer);
+}
+
+/* ============================= MINECRAFT SHADER PIPELINE ============================= */
+
+async function preprocessShader(source, depth = 0, importedSet = null) {
+  if (depth > 10) return '// #moj_import recursion limit';
+  if (!importedSet) importedSet = new Set();
+  const output = [];
+  for (const line of source.split('\n')) {
+    const m = line.match(/^\s*#moj_import\s*<([^>]+)>/);
+    if (m) {
+      let ref = m[1].replace(/^minecraft:/, '');
+      if (importedSet.has(ref)) continue;
+      importedSet.add(ref);
+      try {
+        const included = await loadShaderFile(`include/${ref}`);
+        output.push(await preprocessShader(included, depth + 1, importedSet));
+      } catch (e) { output.push(`// [include failed: ${ref}]`); }
+    } else output.push(line);
+  }
+  return output.join('\n');
+}
+
+function injectDefines(source, defines) {
+  if (!defines || Object.keys(defines).length === 0) return source;
+  return Object.entries(defines).map(([k, v]) => `#define ${k} ${v}`).join('\n') + '\n' + source;
+}
+
+function stripShaderPreamble(source) {
+  return source
+    .replace(/^[ \t]*#version[ \t]+\d+([ \t]+\w+)?[ \t]*\r?\n?/gm, '')
+    .replace(/^[ \t]*precision[ \t]+(lowp|mediump|highp)[ \t]+(float|int)[ \t]*;[ \t]*\r?\n?/gm, '');
+}
+
+function stripUBOs(source) {
+  let s = source, changed = true;
+  while (changed) {
+    changed = false;
+    let next = s.replace(/layout\s*\([^)]*\)/g, '');
+    if (next !== s) { s = next; changed = true; }
+    next = s.replace(/\(\s*(?:std140|std430|location(?:\s*=\s*\d+)?|binding(?:\s*=\s*\d+)?|set(?:\s*=\s*\d+)?|push_constant)\s*\)/g, '');
+    if (next !== s) { s = next; changed = true; }
+    next = s.replace(/uniform\s+(?:\w+\s+)?\{[^}]*\}\s*\w*\s*;?/g, '');
+    if (next !== s) { s = next; changed = true; }
+  }
+  return s;
+}
+
+function normalizeShaderSource(source, isVertex) {
+  let s = stripUBOs(source);
+  s = s.replace(/\bModelViewMat\b/g, 'modelViewMatrix');
+  s = s.replace(/\bProjMat\b/g, 'projectionMatrix');
+  s = s.replace(/^\s*uniform\s+mat4\s+(modelViewMatrix|projectionMatrix|modelMatrix|viewMatrix)\s*;\s*$/gm, '');
+  s = s.replace(/^\s*uniform\s+mat3\s+normalMatrix\s*;\s*$/gm, '');
+  s = s.replace(/^\s*uniform\s+vec3\s+cameraPosition\s*;\s*$/gm, '');
+  s = s.replace(/^\s*uniform\s+vec4\s+ColorModulator\s*;\s*$/gm, '');
+  s = s.replace(/^\s*uniform\s+vec3\s+ModelOffset\s*;\s*$/gm, '');
+  s = s.replace(/^\s*uniform\s+mat4\s+TextureMat\s*;\s*$/gm, '');
+  s = s.replace(/^\s*uniform\s+float\s+LineWidth\s*;\s*$/gm, '');
+  if (isVertex) {
+    s = s.replace(/\bin\s+vec3\s+Position\s*;/g, '');
+    s = s.replace(/\bPosition\b/g, 'position');
+    s = s.replace(/^\s*in\s+vec3\s+position\s*;\s*$/gm, '');
+    s = s.replace(/^\s*in\s+vec3\s+normal\s*;\s*$/gm, '');
+    s = s.replace(/^\s*in\s+vec2\s+uv\s*;\s*$/gm, '');
+  }
+  return s;
+}
+
+async function createMCShaderMaterial({
+  vshPath, fshPath, defines = {}, textures = {}, uniforms = {},
+  transparent = false, side = THREE.FrontSide,
+}) {
+  const key = vshPath + '|' + fshPath + '|' + JSON.stringify(defines);
+  if (shaderMaterialCache.has(key)) return shaderMaterialCache.get(key);
+  try {
+    const [vshRaw, fshRaw] = await Promise.all([loadShaderFile(vshPath), loadShaderFile(fshPath)]);
+    let vsh = await preprocessShader(vshRaw);
+    let fsh = await preprocessShader(fshRaw);
+    vsh = injectDefines(vsh, defines);
+    fsh = injectDefines(fsh, defines);
+    vsh = stripShaderPreamble(vsh);
+    fsh = stripShaderPreamble(fsh);
+    vsh = normalizeShaderSource(vsh, true);
+    fsh = normalizeShaderSource(fsh, false);
+
+    const commonHeader = `precision highp float;
+precision highp int;
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+uniform mat4 modelMatrix;
+uniform mat4 viewMatrix;
+uniform mat3 normalMatrix;
+uniform vec3 cameraPosition;
+uniform vec4 ColorModulator;
+uniform vec3 ModelOffset;
+uniform mat4 TextureMat;
+uniform float LineWidth;
+uniform vec4 FogColor;
+uniform float FogEnvironmentalStart;
+uniform float FogEnvironmentalEnd;
+uniform float FogRenderDistanceStart;
+uniform float FogRenderDistanceEnd;
+uniform float FogSkyEnd;
+uniform float FogCloudsEnd;
+uniform float GameTime;
+uniform ivec3 CameraBlockPos;
+uniform vec3 CameraOffset;
+`;
+    const vertexShader = commonHeader + `in vec3 position;\nin vec3 normal;\nin vec2 uv;\n` + vsh;
+    const fragmentShader = commonHeader + fsh;
+
+    const finalUniforms = {
+      modelViewMatrix: { value: new THREE.Matrix4() },
+      projectionMatrix: { value: new THREE.Matrix4() },
+      modelMatrix: { value: new THREE.Matrix4() },
+      viewMatrix: { value: new THREE.Matrix4() },
+      normalMatrix: { value: new THREE.Matrix3() },
+      cameraPosition: { value: new THREE.Vector3() },
+      ColorModulator: { value: new THREE.Vector4(1, 1, 1, 1) },
+      ModelOffset: { value: new THREE.Vector3(0, 0, 0) },
+      TextureMat: { value: new THREE.Matrix4() },
+      LineWidth: { value: 1.0 },
+      GameTime: { value: 0 },
+      FogColor: { value: new THREE.Vector4(0, 0, 0, 1) },
+      FogEnvironmentalStart: { value: 0.0 },
+      FogEnvironmentalEnd: { value: 1000.0 },
+      FogRenderDistanceStart: { value: 200.0 },
+      FogRenderDistanceEnd: { value: 1000.0 },
+      FogSkyEnd: { value: 1000.0 },
+      FogCloudsEnd: { value: 1000.0 },
+      CameraBlockPos: { value: new THREE.Vector3(0, 0, 0) },
+      CameraOffset: { value: new THREE.Vector3(0, 0, 0) },
+      ...uniforms,
+    };
+    for (const [k, v] of Object.entries(textures)) finalUniforms[k] = { value: v };
+
+    const material = new THREE.RawShaderMaterial({
+      vertexShader, fragmentShader, uniforms: finalUniforms, transparent, side,
+      glslVersion: THREE.GLSL3,
+    });
+    material.onBeforeRender = function (renderer, scene, camera, geometry, object) {
+      const u = this.uniforms;
+      u.modelViewMatrix.value.multiplyMatrices(camera.matrixWorldInverse, object.matrixWorld);
+      u.projectionMatrix.value.copy(camera.projectionMatrix);
+      u.modelMatrix.value.copy(object.matrixWorld);
+      u.viewMatrix.value.copy(camera.matrixWorldInverse);
+      u.normalMatrix.value.getNormalMatrix(u.modelViewMatrix.value);
+      u.cameraPosition.value.setFromMatrixPosition(camera.matrixWorld);
+    };
+    if (!timeUniforms.find(t => t.uniformRef === finalUniforms.GameTime)) {
+      timeUniforms.push({ uniformRef: finalUniforms.GameTime, speed: 20 });
+    }
+    shaderMaterialCache.set(key, material);
+    return material;
+  } catch (err) {
+    showError(`Shader setup failed (${vshPath}): ${err.message}`);
+    console.error(err);
+    const fallbackTex = textures.Sampler0 || textures.Sampler1 || magentaTex;
+    return new THREE.MeshBasicMaterial({ map: fallbackTex, transparent, side });
+  }
+}
+
+async function getShaderConfigForBlock(blockId) {
+  const id = blockId.replace('minecraft:', '');
+  if (id === 'end_portal') return {
+    vshPath: 'core/rendertype_end_portal.vsh', fshPath: 'core/rendertype_end_portal.fsh',
+    defines: { PORTAL_LAYERS: 15 },
+    textures: { Sampler0: getTexture('environment/end_sky'), Sampler1: getTexture('entity/end_portal') },
+    transparent: false, side: THREE.DoubleSide,
+  };
+  if (id === 'end_gateway') return {
+    vshPath: 'core/rendertype_end_portal.vsh', fshPath: 'core/rendertype_end_portal.fsh',
+    defines: { PORTAL_LAYERS: 16 },
+    textures: { Sampler0: getTexture('environment/end_sky'), Sampler1: getTexture('entity/end_portal') },
+    transparent: false, side: THREE.DoubleSide,
+  };
+  return null;
+}
+
+/* ============================= TEXTURE LOADING ============================= */
+
+function getTexture(texPath) {
+  const cleanPath = texPath.replace('minecraft:', '');
+  const url = `${ASSET_BASE}/textures/${cleanPath}.png`;
+  if (textureCache.has(url)) return textureCache.get(url);
+  const tex = new THREE.TextureLoader().load(url, (loadedTex) => {
+    const image = loadedTex.image;
+    if (image && image.height > image.width && image.height % image.width === 0) {
+      const frameCount = image.height / image.width;
+      loadedTex.repeat.set(1, 1 / frameCount);
+      loadedTex.userData = { frameCount, currentFrame: 0, timer: 0, frameDuration: 0.1 };
+      if (!animatedTextures.includes(loadedTex)) animatedTextures.push(loadedTex);
+    }
+  }, undefined, (err) => { showError(`Texture missing: ${url}`); textureCache.set(url, magentaTex); });
+  tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+  tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  textureCache.set(url, tex);
+  return tex;
+}
+
+/* ============================= NORMAL MAPS ============================= */
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image(); img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img); img.onerror = () => reject(new Error(`Failed ${url}`));
+    img.src = url;
+  });
+}
+
+async function buildNormalMapFromUrl(url) {
+  const img = await loadImage(url);
+  const w = img.width, h = img.height;
+  const srcCanvas = document.createElement('canvas');
+  srcCanvas.width = w; srcCanvas.height = h;
+  const srcCtx = srcCanvas.getContext('2d');
+  srcCtx.drawImage(img, 0, 0);
+  const src = srcCtx.getImageData(0, 0, w, h).data;
+
+  const lum = (x, y) => {
+    const xx = ((x % w) + w) % w;
+    const yy = ((y % h) + h) % h;
+    const i = (yy * w + xx) * 4;
+    return (src[i] * 0.299 + src[i+1] * 0.587 + src[i+2] * 0.114) / 255;
+  };
+
+  let sum = 0, sumSq = 0;
+  for (let i = 0; i < w * h; i++) {
+    const l = (src[i*4] * 0.299 + src[i*4+1] * 0.587 + src[i*4+2] * 0.114) / 255;
+    sum += l; sumSq += l * l;
+  }
+  const mean = sum / (w * h);
+  const variance = Math.max(0, sumSq / (w * h) - mean * mean);
+  const contrast = Math.sqrt(variance);
+  if (contrast < CONFIG.render.minContrast) return null;
+
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = w; outCanvas.height = h;
+  const outCtx = outCanvas.getContext('2d');
+  const out = outCtx.createImageData(w, h);
+  const boost = CONFIG.render.normalEdgeBoost;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const gx = lum(x + 1, y) - lum(x - 1, y);
+      const gy = lum(x, y + 1) - lum(x, y - 1);
+      let nx = -gx * boost, ny = -gy * boost, nz = 1.0;
+      const l = Math.sqrt(nx*nx + ny*ny + nz*nz);
+      nx /= l; ny /= l; nz /= l;
+      const i = (y * w + x) * 4;
+      out.data[i]   = Math.round((nx * 0.5 + 0.5) * 255);
+      out.data[i+1] = Math.round((ny * 0.5 + 0.5) * 255);
+      out.data[i+2] = Math.round((nz * 0.5 + 0.5) * 255);
+      out.data[i+3] = 255;
+    }
+  }
+  outCtx.putImageData(out, 0, 0);
+
+  const tex = new THREE.CanvasTexture(outCanvas);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  return tex;
+}
+
+function getNormalMap(url) {
+  if (normalMapCache.has(url)) return normalMapCache.get(url);
+  if (normalMapPending.has(url)) return null;
+  const p = buildNormalMapFromUrl(url)
+    .then((tex) => { normalMapCache.set(url, tex); return tex; })
+    .catch((err) => { console.warn(`Normal map failed for ${url}:`, err); return null; });
+  normalMapPending.set(url, p);
+  return null;
+}
+
+function applyNormalMap(material, normalMap) {
+  material.normalMap = normalMap;
+  material.normalScale.set(CONFIG.render.normalStrength, CONFIG.render.normalStrength);
+  material.needsUpdate = true;
+}
+
+function attachNormalMap(material, texPath) {
+  if (!CONFIG.render.normalMap) return;
+  const cleanPath = texPath.replace('minecraft:', '');
+  const texUrl = `${ASSET_BASE}/textures/${cleanPath}.png`;
+  const ready = getNormalMap(texUrl);
+  if (ready) {
+    applyNormalMap(material, ready);
+  } else {
+    const p = normalMapPending.get(texUrl);
+    if (p) p.then((nm) => { if (nm) applyNormalMap(material, nm); });
+  }
+}
+
+/* ============================= MODEL / BLOCKSTATE LOADING ============================= */
+
+async function loadModel(modelName) {
+  let clean = modelName.replace('minecraft:', '');
+  if (!clean.startsWith('block/')) clean = `block/${clean}`;
+  if (modelCache.has(clean)) return modelCache.get(clean);
+  try {
+    const res = await fetch(`${ASSET_BASE}/models/${clean}.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${clean}`);
+    const data = await res.json();
+    if (data.parent) {
+      const parent = await loadModel(data.parent);
+      data.textures = { ...parent.textures, ...data.textures };
+      if (!data.elements && parent.elements) data.elements = parent.elements;
+    }
+    modelCache.set(clean, data);
+    return data;
+  } catch (err) { showError(`Model error: ${err.message}`); modelCache.set(clean, null); return null; }
+}
+
+async function loadBlockstate(blockId) {
+  const clean = blockId.replace('minecraft:', '');
+  if (blockstateCache.has(clean)) return blockstateCache.get(clean);
+  try {
+    const res = await fetch(`${ASSET_BASE}/blockstates/${clean}.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${clean}`);
+    const data = await res.json();
+    blockstateCache.set(clean, data);
+    return data;
+  } catch {
+    const fallback = { variants: { "": { model: clean } } };
+    blockstateCache.set(clean, fallback);
+    return fallback;
+  }
+}
+
+const PREFERRED_DEFAULTS = ['y','north','bottom','up','false','none','straight','single','lower','base','floor','left','foot','0','harp','inactive','unlit','unlocked','intact','unpowered','south','east','west','down'];
+
+function computeDefaultProperties(stateData) {
+  const propValues = {};
+  if (stateData.variants) {
+    for (const vk of Object.keys(stateData.variants)) {
+      for (const pair of vk.split(',')) {
+        if (!pair) continue;
+        const [k, v] = pair.split('=');
+        if (!k) continue;
+        const key = k.trim(), val = v.trim();
+        if (!propValues[key]) propValues[key] = new Set();
+        propValues[key].add(val);
+      }
+    }
+  }
+  if (stateData.multipart) {
+    for (const part of stateData.multipart) {
+      if (!part.when) continue;
+      const conds = part.when.OR ? part.when.OR : [part.when];
+      for (const cond of conds) for (const k in cond) {
+        const v = cond[k];
+        if (!propValues[k]) propValues[k] = new Set();
+        if (Array.isArray(v)) v.forEach(x => propValues[k].add(String(x)));
+        else propValues[k].add(String(v));
+      }
+    }
+  }
+  const defaults = {};
+  for (const k in propValues) {
+    const vals = Array.from(propValues[k]);
+    if (vals.includes('true') && vals.includes('false')) { defaults[k] = 'false'; continue; }
+    if (vals.length === 1 && (vals[0] === 'true' || vals[0] === 'false')) { defaults[k] = 'false'; continue; }
+    let found = null;
+    for (const pref of PREFERRED_DEFAULTS) if (vals.includes(pref)) { found = pref; break; }
+    defaults[k] = found || vals.sort()[0];
+  }
+  return defaults;
+}
+
+function getDefaultProperties(stateData, blockId) {
+  if (defaultPropsCache.has(blockId)) return defaultPropsCache.get(blockId);
+  const d = computeDefaultProperties(stateData);
+  defaultPropsCache.set(blockId, d);
+  return d;
+}
+
+function resolveTexture(ref, textures) {
+  let current = ref, depth = 10;
+  while (current && current.startsWith('#') && depth-- > 0) current = textures[current.substring(1)];
+  return current || 'block/missing';
+}
+
+function getDefaultUV(face, from, to) {
+  const [x1, y1, z1] = from;
+  const [x2, y2, z2] = to;
+  switch (face) {
+    case 'north': return [16 - x2, 16 - y2, 16 - x1, 16 - y1];
+    case 'south': return [x1, 16 - y2, x2, 16 - y1];
+    case 'west':  return [z1, 16 - y2, z2, 16 - y1];
+    case 'east':  return [16 - z2, 16 - y2, 16 - z1, 16 - y1];
+    case 'up':    return [x1, 16 - z2, x2, 16 - z1];
+    case 'down':  return [x1, z1, x2, z2];
+    default:     return [0, 0, 16, 16];
+  }
+}
+
+let grassColormap = null, foliageColormap = null;
+async function loadColormaps() {
+  try {
+    grassColormap = await loadImage(`${ASSET_BASE}/textures/colormap/grass.png`);
+    foliageColormap = await loadImage(`${ASSET_BASE}/textures/colormap/foliage.png`);
+  } catch (err) { console.warn('Colormap load failed', err); }
+}
+function getBiomeColor(temp, humidity, colormapImg) {
+  const c = document.createElement('canvas'); c.width = colormapImg.width; c.height = colormapImg.height;
+  const ctx = c.getContext('2d'); ctx.drawImage(colormapImg, 0, 0);
+  const x = Math.floor((1 - humidity) * (colormapImg.width - 1));
+  const y = Math.floor((1 - temp) * (colormapImg.height - 1));
+  const d = ctx.getImageData(x, y, 1, 1).data;
+  return new THREE.Color(d[0]/255, d[1]/255, d[2]/255);
+}
+function getTintForBlock(blockId, tintIndex) {
+  const temp = 0.8, humidity = 0.4;
+  if (tintIndex === 0) { if (grassColormap) return getBiomeColor(temp, humidity, grassColormap); }
+  else if (tintIndex === 1) { if (foliageColormap) return getBiomeColor(temp, humidity, foliageColormap); }
+  else if (tintIndex === 2) return new THREE.Color(0.2, 0.4, 1.0);
+  return new THREE.Color(1,1,1);
+}
+
+/* ============================= FACE GEOMETRY ============================= */
+
+const FACE_DEFS = {
+  east:  { normal: [ 1, 0, 0], corners: (f, t) => [[t[0], f[1], f[2]], [t[0], t[1], f[2]], [t[0], t[1], t[2]], [t[0], f[1], t[2]]] },
+  west:  { normal: [-1, 0, 0], corners: (f, t) => [[f[0], f[1], t[2]], [f[0], t[1], t[2]], [f[0], t[1], f[2]], [f[0], f[1], f[2]]] },
+  up:    { normal: [ 0, 1, 0], corners: (f, t) => [[f[0], t[1], t[2]], [t[0], t[1], t[2]], [t[0], t[1], f[2]], [f[0], t[1], f[2]]] },
+  down:  { normal: [ 0,-1, 0], corners: (f, t) => [[f[0], f[1], f[2]], [t[0], f[1], f[2]], [t[0], f[1], t[2]], [f[0], f[1], t[2]]] },
+  south: { normal: [ 0, 0, 1], corners: (f, t) => [[t[0], f[1], t[2]], [t[0], t[1], t[2]], [f[0], t[1], t[2]], [f[0], f[1], t[2]]] },
+  north: { normal: [ 0, 0,-1], corners: (f, t) => [[f[0], f[1], f[2]], [f[0], t[1], f[2]], [t[0], t[1], f[2]], [t[0], f[1], f[2]]] }
+};
+
+async function buildElementFaceMeshes(el, modelTextures, blockIdForTint) {
+  const from = el.from.map(v => v / 16);
+  const to = el.to.map(v => v / 16);
+  const result = [];
+
+  for (const faceName in FACE_DEFS) {
+    if (!el.faces || !el.faces[faceName]) continue;
+    const face = el.faces[faceName];
+    const texPath = resolveTexture(face.texture, modelTextures);
+    const texture = getTexture(texPath);
+
+    // MeshLambertMaterial is much cheaper than MeshStandardMaterial.
+    // It supports map, normalMap, aoMap, emissive, and vertex colors, but
+    // skips the PBR specular/roughness/metalness path entirely.
+    const material = new THREE.MeshLambertMaterial({
+      map: texture, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide,
+    });
+    if (face.tintindex !== undefined) material.color = getTintForBlock(blockIdForTint, face.tintindex);
+
+    const isAnimated = !!texture.userData?.frameCount;
+    const isMagenta = texture === magentaTex;
+    if (!isAnimated && !isMagenta) {
+      attachNormalMap(material, texPath);
+    }
+
+    let rawUv = face.uv ? [...face.uv] : getDefaultUV(faceName, el.from, el.to);
+    const u1 = rawUv[0] / 16, v1 = 1 - rawUv[1] / 16, u2 = rawUv[2] / 16, v2 = 1 - rawUv[3] / 16;
+
+    let quadUVs;
+    if (faceName === 'up') quadUVs = [[u1, v2], [u2, v2], [u2, v1], [u1, v1]];
+    else if (faceName === 'down') quadUVs = [[u1, v1], [u2, v1], [u2, v2], [u1, v2]];
+    else quadUVs = [[u2, v2], [u2, v1], [u1, v1], [u1, v2]];
+
+    const rot = (face.rotation || 0) % 360;
+    for (let i = 0; i < rot / 90; i++) quadUVs.push(quadUVs.shift());
+
+    const corners = FACE_DEFS[faceName].corners(from, to);
+    const normal = FACE_DEFS[faceName].normal;
+    const positions = [], normals = [], uvs = [];
+    for (let i = 0; i < 4; i++) {
+      positions.push(...corners[i]);
+      normals.push(...normal);
+      uvs.push(quadUVs[i][0], quadUVs[i][1]);
+    }
+    const indices = [0, 1, 2, 0, 2, 3];
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+
+    let cx = 0, cy = 0, cz = 0;
+    for (const c of corners) { cx += c[0]; cy += c[1]; cz += c[2]; }
+    cx /= 4; cy /= 4; cz /= 4;
+
+    if (el.rotation) {
+      const origin = el.rotation.origin.map(v => v / 16);
+      const axis = el.rotation.axis;
+      const angle = THREE.MathUtils.degToRad(el.rotation.angle || 0);
+      const q = new THREE.Quaternion().setFromAxisAngle(
+        axis === 'x' ? new THREE.Vector3(1,0,0) : axis === 'y' ? new THREE.Vector3(0,1,0) : new THREE.Vector3(0,0,1),
+        angle
+      );
+      geometry.translate(-origin[0], -origin[1], -origin[2]);
+      geometry.applyQuaternion(q);
+      geometry.translate(origin[0], origin[1], origin[2]);
+      const cv = new THREE.Vector3(cx, cy, cz);
+      const o = new THREE.Vector3(...origin);
+      cv.sub(o).applyQuaternion(q).add(o);
+      cx = cv.x; cy = cv.y; cz = cv.z;
+      const nv = new THREE.Vector3(...normal).applyQuaternion(q);
+      result.push({ geometry, material, normal: [nv.x, nv.y, nv.z], center: [cx, cy, cz] });
+    } else {
+      result.push({ geometry, material, normal, center: [cx, cy, cz] });
+    }
+  }
+  return result;
+}
+
+async function buildModelGroup(model, blockId, materialOverride = null) {
+  const group = new THREE.Group();
+  if (!model || !model.elements) return group;
+  for (const el of model.elements) {
+    const faceMeshes = await buildElementFaceMeshes(el, model.textures || {}, blockId);
+    for (const fm of faceMeshes) {
+      const mesh = new THREE.Mesh(fm.geometry, materialOverride || fm.material);
+      mesh.userData.faceNormal = new THREE.Vector3(...fm.normal);
+      mesh.userData.faceCenter = new THREE.Vector3(...fm.center);
+      group.add(mesh);
+      if (!materialOverride) cullableMeshes.add(mesh);
+    }
+  }
+  return group;
+}
+
+/* ============================= MODEL SELECTION ============================= */
+
+async function getBlockModels(blockId, properties, pos) {
+  const stateData = await loadBlockstate(blockId);
+  const defaults = getDefaultProperties(stateData, blockId.replace('minecraft:', ''));
+  const filledProps = { ...defaults, ...properties };
+  const modelApps = [];
+
+  if (stateData.variants) {
+    let best = null, bestScore = -1;
+    for (const vk of Object.keys(stateData.variants)) {
+      const vProps = {};
+      for (const pair of vk.split(',')) { if (!pair) continue; const [k, v] = pair.split('='); if (k) vProps[k.trim()] = v.trim(); }
+      let ok = true;
+      for (const k in vProps) if (String(filledProps[k]) !== vProps[k]) { ok = false; break; }
+      if (ok) { const score = Object.keys(vProps).length; if (score > bestScore) { bestScore = score; best = stateData.variants[vk]; } }
+    }
+    if (!best) best = stateData.variants[Object.keys(stateData.variants)[0]];
+    if (best) {
+      let chosen;
+      if (Array.isArray(best)) {
+        if (best.length === 1) chosen = best[0];
+        else if (pos) { const hash = (((pos.x * 73856093) ^ (pos.y * 19349663) ^ (pos.z * 83492791)) >>> 0); chosen = best[hash % best.length]; }
+        else chosen = best[0];
+      } else chosen = best;
+      modelApps.push({ model: chosen.model, x: chosen.x || 0, y: chosen.y || 0 });
+    }
+  } else if (stateData.multipart) {
+    for (const part of stateData.multipart) {
+      let match = true;
+      if (part.when) {
+        match = false;
+        if (part.when.OR) match = part.when.OR.some(c => matchesCondition(c, filledProps));
+        else match = matchesCondition(part.when, filledProps);
+      }
+      if (match && part.apply) {
+        const apps = Array.isArray(part.apply) ? part.apply : [part.apply];
+        for (const app of apps) modelApps.push({ model: app.model, x: app.x || 0, y: app.y || 0 });
+      }
+    }
+  }
+
+  const result = [];
+  for (const app of modelApps) {
+    const data = await loadModel(app.model);
+    if (data) result.push({ data, x: app.x, y: app.y });
+  }
+  return result;
+}
+
+function matchesCondition(cond, props) {
+  for (const k in cond) {
+    const val = cond[k];
+    if (typeof val === 'string') { if (String(props[k]) !== val) return false; }
+    else if (Array.isArray(val)) { if (!val.includes(String(props[k]))) return false; }
+  }
+  return true;
+}
+
+async function createBlockGroup(blockId, properties, pos) {
+  const shaderConfig = await getShaderConfigForBlock(blockId);
+  if (shaderConfig) {
+    const material = await createMCShaderMaterial(shaderConfig);
+    const modelEntries = await getBlockModels(blockId, properties, pos);
+    const group = new THREE.Group();
+    if (modelEntries.length === 0) {
+      const geom = new THREE.BoxGeometry(1, 1, 1);
+      geom.translate(0.5, 0.5, 0.5);
+      group.add(new THREE.Mesh(geom, material));
+      return group;
+    }
+    for (const entry of modelEntries) {
+      const modelGroup = await buildModelGroup(entry.data, blockId, material);
+      const rotX = entry.x || 0, rotY = entry.y || 0;
+      if (rotX !== 0 || rotY !== 0) {
+        const pivot = new THREE.Group();
+        pivot.position.set(0.5, 0.5, 0.5);
+        modelGroup.position.set(-0.5, -0.5, -0.5);
+        pivot.add(modelGroup);
+        pivot.rotation.y = THREE.MathUtils.degToRad(-rotY);
+        pivot.rotation.x = THREE.MathUtils.degToRad(-rotX);
+        group.add(pivot);
+      } else group.add(modelGroup);
+    }
+    return group;
+  }
+
+  const modelEntries = await getBlockModels(blockId, properties, pos);
+  const group = new THREE.Group();
+  if (modelEntries.length === 0) {
+    const tex = getTexture(`block/${blockId}`);
+    const mat = new THREE.MeshLambertMaterial({ map: tex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide });
+    group.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1), mat));
+    return group;
+  }
+  for (const entry of modelEntries) {
+    const modelGroup = await buildModelGroup(entry.data, blockId);
+    const rotX = entry.x || 0, rotY = entry.y || 0;
+    if (rotX !== 0 || rotY !== 0) {
+      const pivot = new THREE.Group();
+      pivot.position.set(0.5, 0.5, 0.5);
+      modelGroup.position.set(-0.5, -0.5, -0.5);
+      pivot.add(modelGroup);
+      pivot.rotation.y = THREE.MathUtils.degToRad(-rotY);
+      pivot.rotation.x = THREE.MathUtils.degToRad(-rotX);
+      group.add(pivot);
+    } else group.add(modelGroup);
+  }
+  if (group.children.length === 0) {
+    const tex = getTexture(`block/${blockId}`);
+    const mat = new THREE.MeshLambertMaterial({ map: tex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide });
+    group.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1), mat));
+  }
+  return group;
+}
+
+/* ============================= FACE VISIBILITY ============================= */
+
+const _cullQ = new THREE.Quaternion(), _cullP = new THREE.Vector3(), _cullN = new THREE.Vector3();
+const _cullToCam = new THREE.Vector3(), _cullCamPos = new THREE.Vector3();
+
+function updateFaceVisibility() {
+  _cullCamPos.copy(camera.position);
+  for (const mesh of cullableMeshes) {
+    _cullP.copy(mesh.userData.faceCenter);
+    mesh.localToWorld(_cullP);
+    mesh.getWorldQuaternion(_cullQ);
+    _cullN.copy(mesh.userData.faceNormal).applyQuaternion(_cullQ);
+    _cullToCam.copy(_cullCamPos).sub(_cullP);
+    mesh.visible = _cullN.dot(_cullToCam) > 0;
+  }
+}
+
+/* ============================= COMMANDS ============================= */
+
+function loadCommandsFromStorage() {
+  const saved = localStorage.getItem('voxelBuilderCommandsJava');
+  document.getElementById('commands').value = saved || "/setblock 0 0 0 end_portal\n/setblock 1 0 0 stone\n/fill 2 0 0 4 2 2 stone";
+}
+function saveCommandsToStorage() {
+  localStorage.setItem('voxelBuilderCommandsJava', document.getElementById('commands').value);
+}
+function parseBlockSpec(spec) {
+  let id = spec, props = {};
+  const bracket = spec.indexOf('[');
+  if (bracket !== -1) {
+    id = spec.substring(0, bracket);
+    const propStr = spec.substring(bracket+1, spec.length-1);
+    for (const pair of propStr.split(',')) { const [k,v] = pair.split('='); if (k && v) props[k.trim()] = v.trim(); }
+  }
+  return [id, props];
+}
+
+async function build() {
+  scene.children.filter(c =>
+    !(c instanceof THREE.AmbientLight) && !(c instanceof THREE.DirectionalLight) &&
+    c !== sunLight.target &&
+    c !== gridHelper && c !== skyMesh && c !== sunMesh && c !== moonMesh && c !== starContainer
+  ).forEach(c => scene.remove(c));
+  worldBlocks.clear();
+  cullableMeshes.clear();
+  errorOverlay.textContent = ''; errorOverlay.style.display = 'none';
+  await loadColormaps();
+
+  const placementMap = new Map();
+  for (const rawLine of document.getElementById('commands').value.split('\n')) {
+    const line = rawLine.trim(); if (!line) continue;
+    const parts = line.match(/\S+/g) || []; if (parts.length === 0) continue;
+    const cmd = parts[0].toLowerCase();
+    if (cmd === '/setblock' && parts.length >= 5) {
+      placementMap.set(`${parseFloat(parts[1])},${parseFloat(parts[2])},${parseFloat(parts[3])}`, parts[4].toLowerCase().replace('minecraft:',''));
+    } else if (cmd === '/fill' && parts.length >= 8) {
+      const x1 = Math.min(parseFloat(parts[1]), parseFloat(parts[4]));
+      const x2 = Math.max(parseFloat(parts[1]), parseFloat(parts[4]));
+      const y1 = Math.min(parseFloat(parts[2]), parseFloat(parts[5]));
+      const y2 = Math.max(parseFloat(parts[2]), parseFloat(parts[5]));
+      const z1 = Math.min(parseFloat(parts[3]), parseFloat(parts[6]));
+      const z2 = Math.max(parseFloat(parts[3]), parseFloat(parts[6]));
+      const spec = parts[7].toLowerCase().replace('minecraft:','');
+      for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) for (let z = z1; z <= z2; z++) {
+        placementMap.set(`${x},${y},${z}`, spec);
+      }
+    }
+  }
+
+  for (const [key, spec] of placementMap) {
+    const [id, props] = parseBlockSpec(spec);
+    worldBlocks.set(key, { id, properties: props, group: null });
+  }
+  for (const [key, spec] of placementMap) {
+    const [xStr, yStr, zStr] = key.split(',');
+    const x = parseInt(xStr, 10), y = parseInt(yStr, 10), z = parseInt(zStr, 10);
+    const [id, props] = parseBlockSpec(spec);
+    try {
+      const group = await createBlockGroup(id, props, { x, y, z });
+      group.position.set(x + 0.5, y + 0.5, z + 0.5);
+      scene.add(group);
+      worldBlocks.get(key).group = group;
+    } catch (err) { showError(`Failed to place ${id}: ${err.message}`); console.error(err); }
+  }
+  console.log('Build complete');
+}
+
+/* ============================= ANIMATION ============================= */
+
+const clock = new THREE.Clock();
+let gameTime = 0;
+
+function updateSky(delta) {
+  if (!skyMaterial) return;
+  skyElapsed += delta;
+  const totalProgress = skyElapsed / CONFIG.sky.stateDuration;
+  const stateIndex = Math.floor(totalProgress) % CONFIG.sky.stateCount;
+  const nextIndex = (stateIndex + 1) % CONFIG.sky.stateCount;
+  const localProgress = totalProgress - Math.floor(totalProgress);
+  let blend = 0;
+  if (localProgress >= CONFIG.sky.holdFraction) {
+    blend = (localProgress - CONFIG.sky.holdFraction) / (1 - CONFIG.sky.holdFraction);
+  }
+  skyMaterial.uniforms.currentState.value = stateIndex;
+  skyMaterial.uniforms.nextState.value = nextIndex;
+  skyMaterial.uniforms.blend.value = blend;
+  skyMesh.position.copy(camera.position);
+}
+
+function updateCelestialBodies(delta) {
+  if (!sunMesh && !moonMesh && !starMesh) return;
+  dayElapsed += delta;
+  const angle = CONFIG.dayCycle.startAngleRadians + (dayElapsed / CONFIG.dayCycle.cycleSeconds) * Math.PI * 2;
+  const sinAngle = Math.sin(angle);
+
+  if (sunMesh) {
+    const sunX = Math.cos(angle) * CONFIG.sun.distance;
+    const sunY = Math.sin(angle) * CONFIG.sun.distance;
+    sunMesh.position.set(camera.position.x + sunX, camera.position.y + sunY, camera.position.z);
+    sunMesh.lookAt(camera.position);
+    sunMesh.visible = true;
+  }
+  if (moonMesh) {
+    const moonX = Math.cos(angle + Math.PI) * CONFIG.moon.distance;
+    const moonY = Math.sin(angle + Math.PI) * CONFIG.moon.distance;
+    moonMesh.position.set(camera.position.x + moonX, camera.position.y + moonY, camera.position.z);
+    moonMesh.lookAt(camera.position);
+    moonMesh.visible = true;
+    const dayCount = Math.floor(dayElapsed / CONFIG.dayCycle.cycleSeconds);
+    const phaseIndex = ((CONFIG.moon.startingPhase + dayCount) % CONFIG.moon.phaseFiles.length + CONFIG.moon.phaseFiles.length) % CONFIG.moon.phaseFiles.length;
+    if (phaseIndex !== currentMoonPhaseIndex && moonTextures[phaseIndex]) {
+      moonMesh.material.uniforms.tex.value = moonTextures[phaseIndex];
+      currentMoonPhaseIndex = phaseIndex;
+    }
+  }
+  if (starContainer && starMesh) {
+    starContainer.position.copy(camera.position);
+    starContainer.rotation.z = angle - CONFIG.dayCycle.startAngleRadians;
+    let night = 0;
+    if (sinAngle < -0.05) night = Math.min(1, (-sinAngle - 0.05) / 0.35);
+    if (starMesh.material.uniforms) {
+      starMesh.material.uniforms.uNight.value = night;
+      starMesh.material.uniforms.uTime.value = dayElapsed;
+    }
+    starMesh.visible = night > 0.001;
+  }
+}
+
+function updateLighting() {
+  const angle = CONFIG.dayCycle.startAngleRadians + (dayElapsed / CONFIG.dayCycle.cycleSeconds) * Math.PI * 2;
+  const sinAngle = Math.sin(angle);
+  const sunUp = Math.max(0, sinAngle);
+  const moonUp = Math.max(0, -sinAngle);
+  const totalUp = sunUp + moonUp;
+  const dayness = totalUp > 0 ? sunUp / totalUp : 0.5;
+  const fade = Math.min(1, totalUp / CONFIG.lighting.horizonFadeAngle);
+
+  const ambientBase = CONFIG.lighting.ambientNight + (CONFIG.lighting.ambientDay - CONFIG.lighting.ambientNight) * dayness;
+  ambientLight.intensity = ambientBase * (0.6 + 0.4 * fade);
+
+  const activeAngle = sinAngle >= 0 ? angle : angle + Math.PI;
+  const lx = Math.cos(activeAngle);
+  const ly = Math.sin(activeAngle);
+  const ld = 100;
+  sunLight.position.set(camera.position.x + lx * ld, camera.position.y + ly * ld, camera.position.z);
+  sunLight.target.position.copy(camera.position);
+  sunLight.target.updateMatrixWorld();
+
+  const dirIntensity = CONFIG.lighting.moonIntensity + (CONFIG.lighting.sunIntensity - CONFIG.lighting.moonIntensity) * dayness;
+  sunLight.intensity = dirIntensity * fade;
+
+  const sc = CONFIG.lighting.sunColorObj;
+  const mc = CONFIG.lighting.moonColorObj;
+  sunLight.color.setRGB(
+    mc.r + (sc.r - mc.r) * dayness,
+    mc.g + (sc.g - mc.g) * dayness,
+    mc.b + (sc.b - mc.b) * dayness
+  );
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = clock.getDelta();
+  gameTime += delta * 20 * CONFIG.animation.shaderSpeed;
+  for (const { uniformRef } of timeUniforms) uniformRef.value = gameTime;
+  for (const tex of animatedTextures) {
+    const data = tex.userData; if (!data) continue;
+    data.timer += delta;
+    if (data.timer >= data.frameDuration) {
+      data.timer = 0;
+      data.currentFrame = (data.currentFrame + 1) % data.frameCount;
+      tex.offset.y = 1 - ((data.currentFrame + 1) / data.frameCount);
+    }
+  }
+  updateSky(delta);
+  updateCelestialBodies(delta);
+  updateLighting();
+  updateFaceVisibility();
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+document.getElementById('renderBtn').addEventListener('click', () => { saveCommandsToStorage(); build(); });
+document.getElementById('refreshShaBtn').addEventListener('click', () => { forceRefreshSha(); });
+window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+
+(async () => {
+  const sha = await fetchLatestCommitSha();
+  ASSET_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}/minecraft`;
+  REPO_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}`;
+  console.log('Asset base:', ASSET_BASE);
+  await loadConfig();
+  await setupSky();
+  await setupCelestialBodies();
+  await setupStars();
+  loadCommandsFromStorage();
+  build();
+  animate();
+})();
+</script>
+</body>
+</html>
