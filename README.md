@@ -20,9 +20,11 @@ shading live. The choice is stored in `localStorage`; the default comes from
    - tangent-space normals are derived from height differences in the fragment
      shader;
    - a crisp edge term adds a thin highlight on one side of each height step
-     and a thin shadow on the opposite side ("outlined" relief); the direction
-     is fixed in tangent space, so there is no per-frame light uniform or
-     per-fragment world-to-tangent light transform;
+     and a thin shadow on the opposite side ("outlined" relief). It follows the
+     time-of-day sun/moon direction, but the conversion happens per face in the
+     vertex shader using per-face tangent/bitangent attributes; the fragment
+     only does one dot. There is no per-fragment world-to-tangent light
+     transform;
    - low areas are darkened with a height cavity/AO term.
    The height field is expanded to 512x with nearest-neighbour steps, so the
    bevels stay crisp at screen resolution instead of being smoothed. The
@@ -56,7 +58,9 @@ fragment shader: sample the heightmap, derive the tangent-space normal from
 height differences, and shade with it. That is equivalent to the deferred
 G-buffer normal for a single-light scene. The cavity AO and outlined bevel are
 viewer-side approximations; no geometry is displaced and there is no parallax
-walk, which keeps the fragment cost low on mobile.
+walk. The bevel's light direction is projected into each face's UV space in
+the vertex shader from the current sun/moon phase, so it stays light-dependent
+without a per-fragment light transform.
 
 Config knobs (`viewer/config.json`):
 

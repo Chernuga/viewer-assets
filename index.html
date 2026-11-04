@@ -198,6 +198,7 @@ scene.add(worldGroup);
 const textureCache = new Map();
 const HEIGHTMAP_STORAGE_KEY = 'voxelBuilderHeightMapsEnabled';
 let heightMapsEnabled = true;
+const heightSunDir = { value: new THREE.Vector3(0, 1, 0) };
 const modelCache = new Map();
 const modelPending = new Map();
 const blockstateCache = new Map();
@@ -868,16 +869,24 @@ function patchHeightMaterial(material) {
     shader.uniforms.uHeightEdgeThreshold = { value: CONFIG.render.heightMapEdgeThreshold ?? 0.05 };
     shader.uniforms.uHeightLift = { value: CONFIG.render.heightMapLift ?? 0.05 };
     shader.uniforms.uHeightNormalStrength = { value: (CONFIG.render.heightMapNormalStrength ?? 2.4) };
+    shader.uniforms.uHeightSun = heightSunDir;
 
     shader.vertexShader = shader.vertexShader.replace(
       '#include <common>',
       `#include <common>
 attribute vec2 faceScale;
-varying vec2 vFaceScale;`
+attribute vec3 faceTangent;
+attribute vec3 faceBitangent;
+uniform vec3 uHeightSun;
+varying vec2 vFaceScale;
+varying vec2 vHeightLightTS;`
     );
     shader.vertexShader = shader.vertexShader.replace(
       '#include <begin_vertex>',
       `vFaceScale = faceScale;
+vec2 heightLight = vec2(dot(uHeightSun, faceTangent), dot(uHeightSun, faceBitangent));
+float heightLightLen = length(heightLight);
+vHeightLightTS = heightLightLen > 1e-4 ? heightLight / heightLightLen : vec2(0.0, 1.0);
 #include <begin_vertex>`
     );
 
@@ -894,6 +903,7 @@ uniform float uHeightEdgeThreshold;
 uniform float uHeightLift;
 uniform float uHeightNormalStrength;
 varying vec2 vFaceScale;
+varying vec2 vHeightLightTS;
 vec2 gHeightUv;
 vec3 gHeightNormal = vec3(0.0, 0.0, 1.0);
 mat3 gHeightTBN = mat3(1.0);
@@ -940,14 +950,12 @@ mat3 gHeightTBN = mat3(1.0);
     float cavity = clamp((hL + hR + hD + hU) * 0.25 - hC, 0.0, 1.0);
     heightAO = 1.0 - cavity * uHeightAO;
 
-    // Crisp relief outline: fixed tangent-space light, thin highlight on one
-    // side of a height step and thin shadow on the other. This avoids a
-    // per-frame light uniform on mobile.
+    // Crisp relief outline. The sun/moon direction is converted to texture
+    // space per face in the vertex shader; the fragment only does one dot.
     vec2 edge = vec2(hR - hL, hU - hD);
     float edgeMag = length(edge);
     float edgeMask = smoothstep(uHeightEdgeThreshold, uHeightEdgeThreshold + 0.02, edgeMag);
-    const vec2 lightTS = vec2(-0.7071, 0.7071);
-    float slope = dot(edge, lightTS);
+    float slope = dot(edge, vHeightLightTS);
     float lit = smoothstep(0.0, 0.02, slope);
     float shade = smoothstep(0.0, 0.02, -slope);
     heightEdge = 1.0 + uHeightLift + edgeMask * (lit - shade * 0.75) * uHeightEdge;
@@ -1259,6 +1267,30 @@ function pushQuad(bucket, c0, c1, c2, c3, n, uvs, blockKey) {
     worldU > 1e-5 ? uvU / worldU : 1,
     worldV > 1e-5 ? uvV / worldV : 1,
   ];
+
+  // World-space tangent/bitangent for this face from its UV axes. The vertex
+  // shader uses them to turn the day-cycle light into a 2D texture-space
+  // direction, so the bevel follows the sun without any per-fragment transform.
+  const e1x = c1.x - c0.x, e1y = c1.y - c0.y, e1z = c1.z - c0.z;
+  const e2x = c3.x - c0.x, e2y = c3.y - c0.y, e2z = c3.z - c0.z;
+  const du1x = uvs[1][0] - uvs[0][0], du1y = uvs[1][1] - uvs[0][1];
+  const du2x = uvs[3][0] - uvs[0][0], du2y = uvs[3][1] - uvs[0][1];
+  const det = du1x * du2y - du1y * du2x;
+  let tx = 1, ty = 0, tz = 0, bx = 0, by = 1, bz = 0;
+  if (Math.abs(det) > 1e-8) {
+    const inv = 1 / det;
+    tx = (e1x * du2y - e2x * du1y) * inv;
+    ty = (e1y * du2y - e2y * du1y) * inv;
+    tz = (e1z * du2y - e2z * du1y) * inv;
+    bx = (e2x * du1x - e1x * du2x) * inv;
+    by = (e2y * du1x - e1y * du2x) * inv;
+    bz = (e2z * du1x - e1z * du2x) * inv;
+    const tl = Math.hypot(tx, ty, tz) || 1;
+    const bl = Math.hypot(bx, by, bz) || 1;
+    tx /= tl; ty /= tl; tz /= tl;
+    bx /= bl; by /= bl; bz /= bl;
+  }
+
   bucket.faces.push({
     corners: [
       [c0.x, c0.y, c0.z], [c1.x, c1.y, c1.z],
@@ -1271,6 +1303,8 @@ function pushQuad(bucket, c0, c1, c2, c3, n, uvs, blockKey) {
     ],
     blockKey,
     faceScale,
+    tangent: [tx, ty, tz],
+    bitangent: [bx, by, bz],
     removed: false,
   });
 }
@@ -1469,7 +1503,7 @@ function flushBuckets() {
 
   let meshCount = 0, totalFaces = 0;
   for (const bucket of materialBuckets.values()) {
-    const positions = [], normals = [], uvs = [], faceScales = [], indices = [];
+    const positions = [], normals = [], uvs = [], faceScales = [], tangents = [], bitangents = [], indices = [];
     let vCount = 0;
     for (const face of bucket.faces) {
       if (face.removed) continue;
@@ -1479,6 +1513,8 @@ function flushBuckets() {
         normals.push(n[0], n[1], n[2]);
         uvs.push(u[i][0], u[i][1]);
         faceScales.push(face.faceScale[0], face.faceScale[1]);
+        tangents.push(face.tangent[0], face.tangent[1], face.tangent[2]);
+        bitangents.push(face.bitangent[0], face.bitangent[1], face.bitangent[2]);
       }
       indices.push(vCount, vCount + 1, vCount + 2, vCount, vCount + 2, vCount + 3);
       vCount += 4;
@@ -1490,6 +1526,8 @@ function flushBuckets() {
     g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     g.setAttribute('faceScale', new THREE.Float32BufferAttribute(faceScales, 2));
+    g.setAttribute('faceTangent', new THREE.Float32BufferAttribute(tangents, 3));
+    g.setAttribute('faceBitangent', new THREE.Float32BufferAttribute(bitangents, 3));
     g.setIndex(indices);
     g.computeBoundingSphere();
     const mesh = new THREE.Mesh(g, bucket.material);
@@ -1746,6 +1784,7 @@ function updateLighting() {
   const activeAngle = sinAngle >= 0 ? angle : angle + Math.PI;
   const lx = Math.cos(activeAngle);
   const ly = Math.sin(activeAngle);
+  heightSunDir.value.set(lx, ly, 0);
   const ld = 100;
   sunLight.position.set(camera.position.x + lx * ld, camera.position.y + ly * ld, camera.position.z);
   sunLight.target.position.copy(camera.position);
