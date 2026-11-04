@@ -49,7 +49,6 @@
     "minContrast": 0.03,
     "concurrency": 120,
     "heightMap": true,
-    "heightMapDepth": 0.03,
     "heightMapGamma": 1.0,
     "heightMapNormalStrength": 2.4,
     "heightMapAO": 0.12,
@@ -58,7 +57,8 @@
     "heightMapEdgeThreshold": 0.05,
     "heightMapDetail": 0.9,
     "heightMapLevels": 0,
-    "heightMapLift": 0.05
+    "heightMapLift": 0.05,
+    "heightMapSeamless": true
   },
   "lighting": {
     "ambientDay": 0.45,

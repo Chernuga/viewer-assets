@@ -86,10 +86,10 @@ const CONFIG_DEFAULTS = {
     dedupeCoincidentFaces: true,
     concurrency: 12,
     heightMap: true,
-    heightMapDepth: 0.03,
     heightMapResolution: 512,
     heightMapDetail: 0.9,
     heightMapLevels: 0,
+    heightMapSeamless: true,
     heightMapAO: 0.12,
     heightMapEdge: 0.45,
     heightMapEdgeThreshold: 0.05,
@@ -198,7 +198,6 @@ scene.add(worldGroup);
 const textureCache = new Map();
 const HEIGHTMAP_STORAGE_KEY = 'voxelBuilderHeightMapsEnabled';
 let heightMapsEnabled = true;
-const heightLightDir = { value: new THREE.Vector3(0, 1, 0) };
 const modelCache = new Map();
 const modelPending = new Map();
 const blockstateCache = new Map();
@@ -693,6 +692,20 @@ function percentile(sorted, p) {
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
 }
 
+/* Match opposite texture edges so the height field tiles across adjacent blocks. */
+function makePeriodic(values, w, h) {
+  for (let y = 0; y < h; y++) {
+    const a = y * w, b = y * w + (w - 1);
+    const mid = (values[a] + values[b]) * 0.5;
+    values[a] = mid; values[b] = mid;
+  }
+  for (let x = 0; x < w; x++) {
+    const a = x, b = (h - 1) * w + x;
+    const mid = (values[a] + values[b]) * 0.5;
+    values[a] = mid; values[b] = mid;
+  }
+}
+
 function canvasTextureFromGray(values, w, h, outSize, linear) {
   const size = Math.max(w, Math.min(512, Math.round(outSize || w)));
   const canvas = document.createElement('canvas');
@@ -730,10 +743,10 @@ function canvasTextureFromGray(values, w, h, outSize, linear) {
 /*
  * Height inference:
  *   1. perceptual luminance (Rec. 709) from the albedo, alpha-masked;
- *   2. 3x3 median filter to reject single-pixel noise;
- *   3. 3x3 gaussian blur to make continuous slopes;
- *   4. percentile contrast stretch (2%..98%) to use the full 0..1 range;
- *   5. gamma curve, then the shader derives normals, AO and parallax from it.
+ *   2. edge-preserving bilateral filter to reject pixel noise;
+ *   3. controlled high-frequency detail is added back;
+ *   4. percentile contrast stretch (1%..99%) to use the full 0..1 range;
+ *   5. gamma curve, then the shader derives normals, AO and bevels from it.
  */
 async function buildSurfaceMapsFromUrl(url) {
   const img = await loadImage(url);
@@ -776,16 +789,13 @@ async function buildSurfaceMapsFromUrl(url) {
   const gamma = Math.max(0.25, CONFIG.render.heightMapGamma ?? 1.0);
   const levels = Math.max(0, Math.round(CONFIG.render.heightMapLevels || 0));
   const height = new Float32Array(w * h);
-  let sum = 0, sumSq = 0;
   for (let i = 0; i < w * h; i++) {
     let v = Math.max(0, Math.min(1, (raw[i] - lo) / range));
     v = Math.pow(v, gamma);
     if (levels > 1) v = Math.round(v * (levels - 1)) / (levels - 1);
     height[i] = v;
-    sum += v; sumSq += v * v;
   }
-  const mean = sum / (w * h);
-  const stddev = Math.sqrt(Math.max(0, sumSq / (w * h) - mean * mean));
+  if (CONFIG.render.heightMapSeamless !== false) makePeriodic(height, w, h);
 
   const heightTexture = canvasTextureFromGray(
     height, w, h, CONFIG.render.heightMapResolution || 512, false);
@@ -793,9 +803,6 @@ async function buildSurfaceMapsFromUrl(url) {
   return {
     width: heightTexture.userData.size, height: heightTexture.userData.size,
     heightTexture,
-    // Low-contrast surfaces get proportionally shallower parallax.
-    depthScale: Math.max(0.35, Math.min(1.25, stddev / 0.22)),
-    contrast: stddev,
   };
 }
 
@@ -814,12 +821,10 @@ function applySurfaceMapsToMaterial(material, maps, allowHeightRelief) {
   if (!maps) return;
   const data = material.userData;
   data.heightTexture = maps.heightTexture;
-  data.heightDepthScale = maps.depthScale;
   data.heightRelief = allowHeightRelief;
 
   if (data.heightUniforms) {
     data.heightUniforms.uHeightMap.value = maps.heightTexture;
-    data.heightUniforms.uHeightScale.value = CONFIG.render.heightMapDepth * maps.depthScale;
     data.heightUniforms.uHeightMapTexel.value.set(1 / maps.width, 1 / maps.height);
     data.heightUniforms.uHeightSampleStep.value = Math.max(1, maps.width / 192);
     data.heightUniforms.uHeightEnabled.value = (heightMapsEnabled && allowHeightRelief) ? 1 : 0;
@@ -843,61 +848,50 @@ function attachSurfaceMaps(material, texPath, allowHeightRelief) {
   }
 }
 
-/* Parallax occlusion mapping for MeshLambertMaterial. The height map shifts the
- * albedo UVs before lighting; the toggle is a uniform, so no world rebuild. */
+/* Heightmap shading for MeshLambertMaterial. The fragment shader reads the
+ * height field, derives normals/AO/bevels and never displaces geometry; the
+ * toggle is a uniform, so no world rebuild. */
 function patchHeightMaterial(material) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uHeightMap = { value: material.userData.heightTexture || flatHeightTexture };
     shader.uniforms.uHeightEnabled = { value: (heightMapsEnabled && !!material.userData.heightTexture) ? 1 : 0 };
-    shader.uniforms.uHeightScale = { value: (CONFIG.render.heightMapDepth ?? 0.03) * (material.userData.heightDepthScale || 1) };
     shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 512, 1 / 512) };
     shader.uniforms.uHeightSampleStep = { value: 1.0 };
-    shader.uniforms.uHeightAO = { value: CONFIG.render.heightMapAO ?? 0.20 };
+    shader.uniforms.uHeightAO = { value: CONFIG.render.heightMapAO ?? 0.12 };
     shader.uniforms.uHeightEdge = { value: CONFIG.render.heightMapEdge ?? 0.45 };
     shader.uniforms.uHeightEdgeThreshold = { value: CONFIG.render.heightMapEdgeThreshold ?? 0.05 };
     shader.uniforms.uHeightLift = { value: CONFIG.render.heightMapLift ?? 0.05 };
-    shader.uniforms.uHeightLightDir = heightLightDir;
     shader.uniforms.uHeightNormalStrength = { value: (CONFIG.render.heightMapNormalStrength ?? 2.4) };
+
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <common>',
+      `#include <common>
+attribute vec2 faceScale;
+varying vec2 vFaceScale;`
+    );
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `vFaceScale = faceScale;
+#include <begin_vertex>`
+    );
 
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <common>',
       `#include <common>
 uniform sampler2D uHeightMap;
 uniform float uHeightEnabled;
-uniform float uHeightScale;
 uniform vec2 uHeightMapTexel;
 uniform float uHeightSampleStep;
 uniform float uHeightAO;
 uniform float uHeightEdge;
 uniform float uHeightEdgeThreshold;
 uniform float uHeightLift;
-uniform vec3 uHeightLightDir;
 uniform float uHeightNormalStrength;
+varying vec2 vFaceScale;
 vec2 gHeightUv;
 vec3 gHeightNormal = vec3(0.0, 0.0, 1.0);
 mat3 gHeightTBN = mat3(1.0);
 
-vec2 heightParallaxUv(vec2 uv, vec3 viewDir) {
-  const float LAYERS = 16.0;
-  float facing = smoothstep(0.18, 0.55, abs(viewDir.z));
-  vec2 total = (viewDir.xy / max(abs(viewDir.z), 0.30)) * uHeightScale * facing;
-  total = clamp(total, vec2(-0.35), vec2(0.35));
-  vec2 delta = total / LAYERS;
-  vec2 cur = uv;
-  float layer = 0.0;
-  float h = texture2D(uHeightMap, cur).r;
-  for (int i = 0; i < 16; i++) {
-    if (h <= layer) break;
-    cur -= delta;
-    layer += 1.0 / LAYERS;
-    h = texture2D(uHeightMap, cur).r;
-  }
-  vec2 prev = cur + delta;
-  float after = h - layer;
-  float before = texture2D(uHeightMap, prev).r - layer + 1.0 / LAYERS;
-  float w = clamp(after / (after - before + 1e-5), 0.0, 1.0);
-  return mix(cur, prev, w);
-}
 `
     );
 
@@ -923,13 +917,7 @@ vec2 heightParallaxUv(vec2 uv, vec3 viewDir) {
     ht *= hinv; hb *= hinv;
     gHeightTBN = mat3(ht, hb, hn);
 
-    vec3 viewTs = vec3(dot(hv, ht), dot(hv, hb), dot(hv, hn));
-    if (abs(viewTs.z) > 0.15) {
-      heightUv = heightParallaxUv(vMapUv, viewTs);
-      gHeightUv = heightUv;
-    }
-
-    vec2 hStep = uHeightMapTexel * uHeightSampleStep;
+    vec2 hStep = uHeightMapTexel * uHeightSampleStep * vFaceScale;
     float hC = texture2D(uHeightMap, heightUv).r;
     float hL = texture2D(uHeightMap, heightUv - vec2(hStep.x, 0.0)).r;
     float hR = texture2D(uHeightMap, heightUv + vec2(hStep.x, 0.0)).r;
@@ -946,16 +934,13 @@ vec2 heightParallaxUv(vec2 uv, vec3 viewDir) {
     float cavity = clamp((hL + hR + hD + hU) * 0.25 - hC, 0.0, 1.0);
     heightAO = 1.0 - cavity * uHeightAO;
 
-    // Crisp relief outline follows the scene light: project the view-space
-    // light direction into this surface's tangent space, then put a thin
-    // highlight on the light-facing side of a height step and a thin shadow on
-    // the opposite side.
+    // Crisp relief outline: fixed tangent-space light, thin highlight on one
+    // side of a height step and thin shadow on the other. This avoids a
+    // per-frame light uniform on mobile.
     vec2 edge = vec2(hR - hL, hU - hD);
     float edgeMag = length(edge);
     float edgeMask = smoothstep(uHeightEdgeThreshold, uHeightEdgeThreshold + 0.02, edgeMag);
-    vec2 lightTS = vec2(dot(uHeightLightDir, gHeightTBN[0]), dot(uHeightLightDir, gHeightTBN[1]));
-    float lightLen = length(lightTS);
-    lightTS = lightLen > 0.0001 ? lightTS / lightLen : vec2(-0.7071, 0.7071);
+    const vec2 lightTS = vec2(-0.7071, 0.7071);
     float slope = dot(edge, lightTS);
     float lit = smoothstep(0.0, 0.02, slope);
     float shade = smoothstep(0.0, 0.02, -slope);
@@ -989,7 +974,7 @@ function updateHeightmapButton() {
   btn.classList.toggle('on', heightMapsEnabled);
   btn.classList.toggle('off', !heightMapsEnabled);
   btn.setAttribute('aria-pressed', String(heightMapsEnabled));
-  btn.title = 'Toggle heightmap shading: height normals, cavity AO and parallax (H)';
+  btn.title = 'Toggle heightmap shading: height normals, cavity AO and outlined bevels (H)';
 }
 
 function initHeightmapToggle() {
@@ -1261,6 +1246,13 @@ const _qc0 = new THREE.Vector3(), _qc1 = new THREE.Vector3(), _qc2 = new THREE.V
 const _qn = new THREE.Vector3();
 
 function pushQuad(bucket, c0, c1, c2, c3, n, uvs, blockKey) {
+  const worldU = c0.distanceTo(c1), worldV = c0.distanceTo(c3);
+  const uvU = Math.hypot(uvs[1][0] - uvs[0][0], uvs[1][1] - uvs[0][1]);
+  const uvV = Math.hypot(uvs[3][0] - uvs[0][0], uvs[3][1] - uvs[0][1]);
+  const faceScale = [
+    worldU > 1e-5 ? uvU / worldU : 1,
+    worldV > 1e-5 ? uvV / worldV : 1,
+  ];
   bucket.faces.push({
     corners: [
       [c0.x, c0.y, c0.z], [c1.x, c1.y, c1.z],
@@ -1272,6 +1264,7 @@ function pushQuad(bucket, c0, c1, c2, c3, n, uvs, blockKey) {
       [uvs[2][0], uvs[2][1]], [uvs[3][0], uvs[3][1]],
     ],
     blockKey,
+    faceScale,
     removed: false,
   });
 }
@@ -1470,7 +1463,7 @@ function flushBuckets() {
 
   let meshCount = 0, totalFaces = 0;
   for (const bucket of materialBuckets.values()) {
-    const positions = [], normals = [], uvs = [], indices = [];
+    const positions = [], normals = [], uvs = [], faceScales = [], indices = [];
     let vCount = 0;
     for (const face of bucket.faces) {
       if (face.removed) continue;
@@ -1479,6 +1472,7 @@ function flushBuckets() {
         positions.push(c[i][0], c[i][1], c[i][2]);
         normals.push(n[0], n[1], n[2]);
         uvs.push(u[i][0], u[i][1]);
+        faceScales.push(face.faceScale[0], face.faceScale[1]);
       }
       indices.push(vCount, vCount + 1, vCount + 2, vCount, vCount + 2, vCount + 3);
       vCount += 4;
@@ -1489,6 +1483,7 @@ function flushBuckets() {
     g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setAttribute('faceScale', new THREE.Float32BufferAttribute(faceScales, 2));
     g.setIndex(indices);
     g.computeBoundingSphere();
     const mesh = new THREE.Mesh(g, bucket.material);
@@ -1701,7 +1696,7 @@ function updateCelestialBodies(delta) {
     const sunY = Math.sin(angle) * CONFIG.sun.distance;
     sunMesh.position.set(camera.position.x + sunX, camera.position.y + sunY, camera.position.z);
     orientCelestial(sunMesh, angle);
-    sunMesh.visible = true;
+    sunMesh.visible = sinAngle > 0.0;
   }
   if (moonMesh) {
     const moonAngle = angle + Math.PI;
@@ -1709,7 +1704,7 @@ function updateCelestialBodies(delta) {
     const moonY = Math.sin(moonAngle) * CONFIG.moon.distance;
     moonMesh.position.set(camera.position.x + moonX, camera.position.y + moonY, camera.position.z);
     orientCelestial(moonMesh, moonAngle);
-    moonMesh.visible = true;
+    moonMesh.visible = sinAngle < 0.0;
     const dayCount = Math.floor(dayElapsed / CONFIG.dayCycle.cycleSeconds);
     const phaseIndex = ((CONFIG.moon.startingPhase + dayCount) % CONFIG.moon.phaseFiles.length + CONFIG.moon.phaseFiles.length) % CONFIG.moon.phaseFiles.length;
     if (phaseIndex !== currentMoonPhaseIndex && moonTextures[phaseIndex]) {
@@ -1730,10 +1725,6 @@ function updateCelestialBodies(delta) {
   }
 }
 
-const _heightLightWorld = new THREE.Vector3();
-const _heightLightView = new THREE.Vector3();
-const _heightLightInvQuat = new THREE.Quaternion();
-
 function updateLighting() {
   const angle = CONFIG.dayCycle.startAngleRadians + (dayElapsed / CONFIG.dayCycle.cycleSeconds) * Math.PI * 2;
   const sinAngle = Math.sin(angle);
@@ -1749,12 +1740,6 @@ function updateLighting() {
   const activeAngle = sinAngle >= 0 ? angle : angle + Math.PI;
   const lx = Math.cos(activeAngle);
   const ly = Math.sin(activeAngle);
-  // Directional-light vector is (lx, ly, 0); put it in view space for the
-  // heightmap bevel (its tangent frame lives in view space).
-  _heightLightWorld.set(lx, ly, 0);
-  _heightLightView.copy(_heightLightWorld).applyQuaternion(
-    _heightLightInvQuat.copy(camera.quaternion).invert()).normalize();
-  heightLightDir.value.copy(_heightLightView);
   const ld = 100;
   sunLight.position.set(camera.position.x + lx * ld, camera.position.y + ly * ld, camera.position.z);
   sunLight.target.position.copy(camera.position);

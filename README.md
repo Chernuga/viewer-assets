@@ -19,16 +19,16 @@ shading live. The choice is stored in `localStorage`; the default comes from
 4. The shader consumes that heightmap, not a normal-map image:
    - tangent-space normals are derived from height differences in the fragment
      shader;
-   - a crisp edge term adds a thin highlight on the light-facing side of each
-     height step and a thin shadow on the opposite side ("outlined" relief);
-     the direction comes from the scene's current sun/moon vector, projected
-     into each surface's tangent space, so the bevel moves with the day cycle;
-   - low areas are darkened with a height cavity/AO term;
-   - albedo UVs are shifted with a 16-layer parallax walk for visible depth.
+   - a crisp edge term adds a thin highlight on one side of each height step
+     and a thin shadow on the opposite side ("outlined" relief); the direction
+     is fixed in tangent space, so there is no per-frame light uniform or
+     per-fragment world-to-tangent light transform;
+   - low areas are darkened with a height cavity/AO term.
    The height field is expanded to 512x with nearest-neighbour steps, so the
    bevels stay crisp at screen resolution instead of being smoothed. The
-   shader widens the edge taps to keep the outline width stable as the
-   heightmap resolution changes. The WebGL canvas renders at up to 3x device
+   heightmap edges are matched (periodic) so same-texture blocks meet without a
+   seam, and a per-vertex `faceScale` keeps the bevel width constant on slabs,
+   stairs and other non-unit faces. The WebGL canvas renders at up to 3x device
    pixel ratio for the same reason.
 5. Everything is surface shading only. Block geometry is not displaced or
    tessellated; there is no real height.
@@ -54,20 +54,20 @@ is a lighting-space normal perturbation.
 This viewer is forward-rendered, so it does the same work in the material
 fragment shader: sample the heightmap, derive the tangent-space normal from
 height differences, and shade with it. That is equivalent to the deferred
-G-buffer normal for a single-light scene. The optional cavity AO and the very
-subtle parallax shift are viewer-side approximations of ray-traced AO/GI; they
-are not used for real geometry.
+G-buffer normal for a single-light scene. The cavity AO and outlined bevel are
+viewer-side approximations; no geometry is displaced and there is no parallax
+walk, which keeps the fragment cost low on mobile.
 
 Config knobs (`viewer/config.json`):
 
 ```json
 "render": {
   "heightMap": true,
-  "heightMapDepth": 0.03,
   "heightMapResolution": 512,
   "heightMapDetail": 0.9,
   "heightMapLevels": 0,
-  "heightMapAO": 0.20,
+  "heightMapSeamless": true,
+  "heightMapAO": 0.12,
   "heightMapEdge": 0.45,
   "heightMapEdgeThreshold": 0.05,
   "heightMapLift": 0.05,
@@ -76,20 +76,29 @@ Config knobs (`viewer/config.json`):
 }
 ```
 
-`heightMapDepth` is the maximum UV shift for parallax (0 keeps normals/AO only),
 `heightMapResolution` is the nearest-neighbour heightmap size (512 default,
 512 max), `heightMapDetail` controls how much high-frequency detail is kept,
-`heightMapLevels` quantizes the height field (0 = off), `heightMapEdge` /
+`heightMapLevels` quantizes the height field (0 = off), `heightMapSeamless`
+matches opposite texture edges for seamless tiling, `heightMapEdge` /
 `heightMapEdgeThreshold` control the outlined bevel, `heightMapLift` adds a
 small overall brightness lift when heightmaps are on, `heightMapAO` is
 cavity-darkening strength, and `heightMapNormalStrength` scales the
-height-derived normal relief. Low-contrast textures automatically receive
-shallower parallax.
+height-derived normal relief.
 
-Animated textures, translucent blocks, and flat cutout models skip parallax but
-keep height-derived normals; the toggle removes the whole heightmap shading
+Animated textures, translucent blocks, and flat cutout models skip the bevel
+but keep height-derived normals; the toggle removes the whole heightmap shading
 pass. Running the heightmap pipeline needs nothing beyond the existing albedo
 files.
+
+## Sun and moon
+
+The celestial quads use the vanilla 32x textures with nearest filtering. Their
+alpha is derived from the texture luminance with a black cutout threshold, so
+the moon phases stay opaque instead of letting dark maria turn translucent.
+They are positioned in a world-space circle around the camera (so they stay at
+infinity as you move), are hidden below the horizon, and depth-test against
+terrain. The sun and moon are opposite each other; the moon advances through
+the eight vanilla phase textures once per day.
 
 ## TODO
 
