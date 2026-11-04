@@ -87,9 +87,12 @@ const CONFIG_DEFAULTS = {
     concurrency: 12,
     heightMap: true,
     heightMapDepth: 0.03,
-    heightMapAO: 0.50,
+    heightMapResolution: 192,
+    heightMapAO: 0.20,
+    heightMapEdge: 0.55,
+    heightMapEdgeThreshold: 0.05,
     heightMapGamma: 1.0,
-    heightMapNormalStrength: 2.1,
+    heightMapNormalStrength: 2.4,
   },
   lighting: {
     ambientDay: 0.55, ambientNight: 0.30,
@@ -169,7 +172,7 @@ scene.background = new THREE.Color(0x071014);
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 5000);
 camera.position.set(6, 6, 6);
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.5));
 renderer.setSize(window.innerWidth, window.innerHeight);
 
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
@@ -691,19 +694,27 @@ function percentile(sorted, p) {
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
 }
 
-function canvasTextureFromGray(values, w, h, linear) {
+function canvasTextureFromGray(values, w, h, outSize, linear) {
+  const size = Math.max(w, Math.min(512, Math.round(outSize || w)));
   const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
+  canvas.width = size; canvas.height = size;
   const ctx = canvas.getContext('2d');
-  const img = ctx.createImageData(w, h);
-  for (let i = 0; i < w * h; i++) {
-    const v = Math.max(0, Math.min(255, Math.round(values[i] * 255)));
-    // RTX heightmap convention: R = height, G = B = 0. If G/B are non-zero the
-    // texture-set loader would interpret the image as a normal map instead.
-    img.data[i * 4] = v;
-    img.data[i * 4 + 1] = 0;
-    img.data[i * 4 + 2] = 0;
-    img.data[i * 4 + 3] = 255;
+  const img = ctx.createImageData(size, size);
+  // Nearest-neighbour expansion keeps the 16x steps exact while giving the
+  // shader enough texels for a crisp 1-pixel-wide bevel at screen resolution.
+  for (let y = 0; y < size; y++) {
+    const sy = Math.min(h - 1, Math.floor(y * h / size));
+    for (let x = 0; x < size; x++) {
+      const sx = Math.min(w - 1, Math.floor(x * w / size));
+      const v = Math.max(0, Math.min(255, Math.round(values[sy * w + sx] * 255)));
+      const i = (y * size + x) * 4;
+      // RTX convention: R = height, G = B = 0. Non-zero G/B would identify the
+      // file as a normal map instead of a heightmap.
+      img.data[i] = v;
+      img.data[i + 1] = 0;
+      img.data[i + 2] = 0;
+      img.data[i + 3] = 255;
+    }
   }
   ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(canvas);
@@ -713,6 +724,7 @@ function canvasTextureFromGray(values, w, h, linear) {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.NoColorSpace;
+  tex.userData = { size };
   return tex;
 }
 
@@ -769,10 +781,11 @@ async function buildSurfaceMapsFromUrl(url) {
   const mean = sum / (w * h);
   const stddev = Math.sqrt(Math.max(0, sumSq / (w * h) - mean * mean));
 
-  const heightTexture = canvasTextureFromGray(height, w, h, true);
+  const heightTexture = canvasTextureFromGray(
+    height, w, h, CONFIG.render.heightMapResolution || 192, false);
 
   return {
-    width: w, height: h,
+    width: heightTexture.userData.size, height: heightTexture.userData.size,
     heightTexture,
     // Low-contrast surfaces get proportionally shallower parallax.
     depthScale: Math.max(0.35, Math.min(1.25, stddev / 0.22)),
@@ -831,8 +844,10 @@ function patchHeightMaterial(material) {
     shader.uniforms.uHeightEnabled = { value: (heightMapsEnabled && !!material.userData.heightTexture) ? 1 : 0 };
     shader.uniforms.uHeightScale = { value: (CONFIG.render.heightMapDepth ?? 0.03) * (material.userData.heightDepthScale || 1) };
     shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 16, 1 / 16) };
-    shader.uniforms.uHeightAO = { value: CONFIG.render.heightMapAO ?? 0.50 };
-    shader.uniforms.uHeightNormalStrength = { value: (CONFIG.render.heightMapNormalStrength ?? 2.1) };
+    shader.uniforms.uHeightAO = { value: CONFIG.render.heightMapAO ?? 0.20 };
+    shader.uniforms.uHeightEdge = { value: CONFIG.render.heightMapEdge ?? 0.55 };
+    shader.uniforms.uHeightEdgeThreshold = { value: CONFIG.render.heightMapEdgeThreshold ?? 0.05 };
+    shader.uniforms.uHeightNormalStrength = { value: (CONFIG.render.heightMapNormalStrength ?? 2.4) };
 
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <common>',
@@ -842,6 +857,8 @@ uniform float uHeightEnabled;
 uniform float uHeightScale;
 uniform vec2 uHeightMapTexel;
 uniform float uHeightAO;
+uniform float uHeightEdge;
+uniform float uHeightEdgeThreshold;
 uniform float uHeightNormalStrength;
 vec2 gHeightUv;
 vec3 gHeightNormal = vec3(0.0, 0.0, 1.0);
@@ -877,6 +894,7 @@ vec2 heightParallaxUv(vec2 uv, vec3 viewDir) {
   vec2 heightUv = vMapUv;
   gHeightUv = vMapUv;
   float heightAO = 1.0;
+  float heightEdge = 1.0;
   if (uHeightEnabled > 0.5) {
     vec3 hv = normalize(vViewPosition);
     vec3 hn = normalize(vNormal);
@@ -913,13 +931,23 @@ vec2 heightParallaxUv(vec2 uv, vec3 viewDir) {
     // Cavity darkening in the low parts of the height field.
     float cavity = clamp((hL + hR + hD + hU) * 0.25 - hC, 0.0, 1.0);
     heightAO = 1.0 - cavity * uHeightAO;
+
+    // Crisp relief outline: a thin highlight on the light-facing side of a
+    // height step and a thin shadow on the opposite side.
+    vec2 edge = vec2(hR - hL, hU - hD);
+    float edgeMag = length(edge);
+    float edgeMask = smoothstep(uHeightEdgeThreshold, uHeightEdgeThreshold + 0.02, edgeMag);
+    float slope = dot(edge, vec2(-0.7071, 0.7071));
+    float lit = smoothstep(0.0, 0.02, slope);
+    float shade = smoothstep(0.0, 0.02, -slope);
+    heightEdge = 1.0 + edgeMask * (lit - shade) * uHeightEdge;
   }
   vec4 sampledDiffuseColor = texture2D( map, heightUv );
   #ifdef DECODE_VIDEO_TEXTURE
     sampledDiffuseColor = vec4( mix( pow( sampledDiffuseColor.rgb * 0.9478672986 + vec3( 0.0521327014 ), vec3( 2.4 ) ), sampledDiffuseColor.rgb * 0.0773993808, vec3( lessThanEqual( sampledDiffuseColor.rgb, vec3( 0.04045 ) ) ) ), sampledDiffuseColor.w );
   #endif
   diffuseColor *= sampledDiffuseColor;
-  diffuseColor.rgb *= heightAO;
+  diffuseColor.rgb *= heightAO * heightEdge;
 #endif`
     );
 

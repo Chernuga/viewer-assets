@@ -18,8 +18,13 @@ shading live. The choice is stored in `localStorage`; the default comes from
 4. The shader consumes that heightmap, not a normal-map image:
    - tangent-space normals are derived from height differences in the fragment
      shader;
+   - a crisp edge term adds a thin highlight on the light-facing side of each
+     height step and a thin shadow on the opposite side ("outlined" relief);
    - low areas are darkened with a height cavity/AO term;
    - albedo UVs are shifted with a 16-layer parallax walk for visible depth.
+   The height field is expanded to 192x with nearest-neighbour steps, so the
+   bevels stay one pixel wide at screen resolution instead of being smoothed.
+   The WebGL canvas renders at up to 2.5x device pixel ratio for the same reason.
 5. Everything is surface shading only. Block geometry is not displaced or
    tessellated; there is no real height.
 
@@ -54,13 +59,18 @@ Config knobs (`viewer/config.json`):
 "render": {
   "heightMap": true,
   "heightMapDepth": 0.03,
-  "heightMapAO": 0.50,
+  "heightMapResolution": 192,
+  "heightMapAO": 0.20,
+  "heightMapEdge": 0.55,
+  "heightMapEdgeThreshold": 0.05,
   "heightMapGamma": 1.0,
-  "heightMapNormalStrength": 2.1
+  "heightMapNormalStrength": 2.4
 }
 ```
 
 `heightMapDepth` is the maximum UV shift for parallax (0 keeps normals/AO only),
+`heightMapResolution` is the nearest-neighbour heightmap size (192 default),
+`heightMapEdge` / `heightMapEdgeThreshold` control the outlined bevel, 
 `heightMapAO` is cavity-darkening strength, and `heightMapNormalStrength`
 scales the height-derived normal relief. Low-contrast textures automatically
 receive shallower parallax.
