@@ -23,6 +23,31 @@ shading live. The choice is stored in `localStorage`; the default comes from
 5. Everything is surface shading only. Block geometry is not displaced or
    tessellated; there is no real height.
 
+## How RTX / deferred renderers use heightmaps
+
+The reference implementation is Minecraft RTX. A PBR texture set may contain a
+`heightmap` layer *or* a `normal` layer, but not both; the heightmap is a
+single-channel image. In NVIDIA's authoring format the red channel stores
+height (`1` = protrudes, `0` = recedes, `0.5` = neutral) and green/blue must be
+`0`, otherwise the game treats the file as a normal map
+([NVIDIA PBR guide](https://www.nvidia.com/en-us/geforce/guides/minecraft-rtx-texturing-guide/),
+[Microsoft texture-set docs](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/texturesetsreference/texturesetsconcepts/texturesetsintroduction)).
+
+The engine converts that height field into surface normals (Vanilla RTX, for
+example, ships 16x heightmaps and generates 192x normals from them). In a
+deferred renderer the geometry pass writes albedo, normal, depth, roughness and
+metalness/emissive into the G-buffer; the lighting/ray-tracing pass then shades
+using the normal from the G-buffer. The heightmap itself is not a G-buffer
+channel and RTX does **not** tessellate or displace the block; the "height"
+is a lighting-space normal perturbation.
+
+This viewer is forward-rendered, so it does the same work in the material
+fragment shader: sample the heightmap, derive the tangent-space normal from
+height differences, and shade with it. That is equivalent to the deferred
+G-buffer normal for a single-light scene. The optional cavity AO and the very
+subtle parallax shift are viewer-side approximations of ray-traced AO/GI; they
+are not used for real geometry.
+
 Config knobs (`viewer/config.json`):
 
 ```json

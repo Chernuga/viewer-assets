@@ -209,7 +209,7 @@ const blockMaterialCache = new Map();
 const magentaTex = new THREE.DataTexture(new Uint8Array([255,0,255,255]), 1, 1, THREE.RGBAFormat);
 magentaTex.needsUpdate = true;
 
-const flatHeightTexture = new THREE.DataTexture(new Uint8Array([128,128,128,255]), 1, 1, THREE.RGBAFormat);
+const flatHeightTexture = new THREE.DataTexture(new Uint8Array([128,0,0,255]), 1, 1, THREE.RGBAFormat);
 flatHeightTexture.needsUpdate = true;
 flatHeightTexture.colorSpace = THREE.NoColorSpace;
 
@@ -698,9 +698,11 @@ function canvasTextureFromGray(values, w, h, linear) {
   const img = ctx.createImageData(w, h);
   for (let i = 0; i < w * h; i++) {
     const v = Math.max(0, Math.min(255, Math.round(values[i] * 255)));
+    // RTX heightmap convention: R = height, G = B = 0. If G/B are non-zero the
+    // texture-set loader would interpret the image as a normal map instead.
     img.data[i * 4] = v;
-    img.data[i * 4 + 1] = v;
-    img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 1] = 0;
+    img.data[i * 4 + 2] = 0;
     img.data[i * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
