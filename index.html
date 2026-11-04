@@ -318,7 +318,13 @@ function loadCelestialTexture(path) {
 async function makeCelestialMaterial(texture) {
   return loadPlainShader('viewer/celestial.vsh', 'viewer/celestial.fsh',
     { tex: { value: texture } },
-    { transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide });
+    {
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.DoubleSide,
+    });
 }
 
 async function setupCelestialBodies() {
@@ -1696,7 +1702,7 @@ function updateCelestialBodies(delta) {
     const sunY = Math.sin(angle) * CONFIG.sun.distance;
     sunMesh.position.set(camera.position.x + sunX, camera.position.y + sunY, camera.position.z);
     orientCelestial(sunMesh, angle);
-    sunMesh.visible = sinAngle > 0.0;
+    sunMesh.visible = true;
   }
   if (moonMesh) {
     const moonAngle = angle + Math.PI;
@@ -1704,7 +1710,7 @@ function updateCelestialBodies(delta) {
     const moonY = Math.sin(moonAngle) * CONFIG.moon.distance;
     moonMesh.position.set(camera.position.x + moonX, camera.position.y + moonY, camera.position.z);
     orientCelestial(moonMesh, moonAngle);
-    moonMesh.visible = sinAngle < 0.0;
+    moonMesh.visible = true;
     const dayCount = Math.floor(dayElapsed / CONFIG.dayCycle.cycleSeconds);
     const phaseIndex = ((CONFIG.moon.startingPhase + dayCount) % CONFIG.moon.phaseFiles.length + CONFIG.moon.phaseFiles.length) % CONFIG.moon.phaseFiles.length;
     if (phaseIndex !== currentMoonPhaseIndex && moonTextures[phaseIndex]) {

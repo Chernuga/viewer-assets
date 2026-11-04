@@ -3,10 +3,10 @@ varying vec2 vUv;
 
 void main() {
   vec4 c = texture2D(tex, vUv);
-  // The vanilla celestial textures have a black background and a fully opaque
-  // alpha channel. Treat non-black pixels as the disc; this keeps the moon
-  // phases opaque instead of letting dark maria turn translucent.
+  // The vanilla celestial textures have a black background and an opaque alpha
+  // channel. Feed luminance into the alpha channel and use additive blending:
+  // black adds nothing (no dark square / edge halo), while the glow and moon
+  // phases add light. This also avoids sorting fringes on the transparent quad.
   float lum = max(c.r, max(c.g, c.b));
-  float alpha = smoothstep(0.04, 0.10, lum);
-  gl_FragColor = vec4(c.rgb, alpha);
+  gl_FragColor = vec4(c.rgb, lum);
 }

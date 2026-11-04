@@ -96,9 +96,11 @@ The celestial quads use the vanilla 32x textures with nearest filtering. Their
 alpha is derived from the texture luminance with a black cutout threshold, so
 the moon phases stay opaque instead of letting dark maria turn translucent.
 They are positioned in a world-space circle around the camera (so they stay at
-infinity as you move), are hidden below the horizon, and depth-test against
-terrain. The sun and moon are opposite each other; the moon advances through
-the eight vanilla phase textures once per day.
+infinity as you move) and are always visible; depth testing still lets terrain
+occlude them. Additive blending with a luminance alpha removes the black
+texture background without a dark square or edge halo. The sun and moon are
+opposite each other; the moon advances through the eight vanilla phase
+textures once per day.
 
 ## TODO
 
