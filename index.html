@@ -87,10 +87,13 @@ const CONFIG_DEFAULTS = {
     concurrency: 12,
     heightMap: true,
     heightMapDepth: 0.03,
-    heightMapResolution: 192,
-    heightMapAO: 0.20,
-    heightMapEdge: 0.55,
+    heightMapResolution: 512,
+    heightMapDetail: 0.9,
+    heightMapLevels: 0,
+    heightMapAO: 0.12,
+    heightMapEdge: 0.45,
     heightMapEdgeThreshold: 0.05,
+    heightMapLift: 0.05,
     heightMapGamma: 1.0,
     heightMapNormalStrength: 2.4,
   },
@@ -172,7 +175,7 @@ scene.background = new THREE.Color(0x071014);
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 5000);
 camera.position.set(6, 6, 6);
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.5));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 3.0));
 renderer.setSize(window.innerWidth, window.innerHeight);
 
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
@@ -195,6 +198,7 @@ scene.add(worldGroup);
 const textureCache = new Map();
 const HEIGHTMAP_STORAGE_KEY = 'voxelBuilderHeightMapsEnabled';
 let heightMapsEnabled = true;
+const heightLightDir = { value: new THREE.Vector3(0, 1, 0) };
 const modelCache = new Map();
 const modelPending = new Map();
 const blockstateCache = new Map();
@@ -652,38 +656,33 @@ function wrapIndex(v, n) {
   return ((v % n) + n) % n;
 }
 
-/* Median filter removes single-pixel colour noise before it becomes fake terrain. */
-function median3(src, w, h) {
-  const out = new Float32Array(w * h);
-  const window = new Float32Array(9);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let p = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          window[p++] = src[wrapIndex(y + dy, h) * w + wrapIndex(x + dx, w)];
-        }
-      }
-      window.sort();
-      out[y * w + x] = window[4];
-    }
-  }
-  return out;
+function srgbToLinear(c) {
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
-/* Small gaussian kernel; gives the height field coherent slopes instead of stair steps. */
-function blur3(src, w, h) {
+/*
+ * Edge-preserving bilateral filter. A normal blur turns mortar lines into soft
+ * lumps; this keeps a brick edge a brick edge while removing single-pixel
+ * colour noise from the height field.
+ */
+function bilateralFilter(src, w, h, radius, sigmaSpace, sigmaRange) {
   const out = new Float32Array(w * h);
+  const spaceScale = 1 / (2 * sigmaSpace * sigmaSpace);
+  const rangeScale = 1 / (2 * sigmaRange * sigmaRange);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      let sum = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const weight = (dx === 0 ? 2 : 1) * (dy === 0 ? 2 : 1);
-          sum += src[wrapIndex(y + dy, h) * w + wrapIndex(x + dx, w)] * weight;
+      const center = src[y * w + x];
+      let sum = 0, weightSum = 0;
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const v = src[wrapIndex(y + dy, h) * w + wrapIndex(x + dx, w)];
+          const d = v - center;
+          const weight = Math.exp(-(dx * dx + dy * dy) * spaceScale - d * d * rangeScale);
+          sum += v * weight;
+          weightSum += weight;
         }
       }
-      out[y * w + x] = sum / 16;
+      out[y * w + x] = sum / weightSum;
     }
   }
   return out;
@@ -750,31 +749,38 @@ async function buildSurfaceMapsFromUrl(url) {
   const lum = new Float32Array(w * h);
   let transparent = 0;
   for (let i = 0; i < w * h; i++) {
-    const r = pixels[i * 4] / 255;
-    const g = pixels[i * 4 + 1] / 255;
-    const b = pixels[i * 4 + 2] / 255;
+    const r = srgbToLinear(pixels[i * 4] / 255);
+    const g = srgbToLinear(pixels[i * 4 + 1] / 255);
+    const b = srgbToLinear(pixels[i * 4 + 2] / 255);
     const a = pixels[i * 4 + 3] / 255;
     if (a < 0.5) transparent++;
-    // Transparent pixels belong to the cutout, not to a raised surface.
     lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) * a;
   }
 
   const opaque = 1 - transparent / (w * h);
   if (opaque < 0.05) return null;
 
-  const filtered = blur3(median3(lum, w, h), w, h);
-  const sorted = Array.from(filtered).sort((a, b) => a - b);
-  const lo = percentile(sorted, 0.02);
-  const hi = percentile(sorted, 0.98);
+  // Preserve the macro form with an edge-preserving base, then put a controlled
+  // amount of the high-frequency detail back so 16x features stay readable.
+  const base = bilateralFilter(lum, w, h, 1, 1.0, 0.16);
+  const detailBoost = CONFIG.render.heightMapDetail ?? 0.9;
+  const raw = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) raw[i] = base[i] + (lum[i] - base[i]) * detailBoost;
+
+  const sorted = Array.from(raw).sort((a, b) => a - b);
+  const lo = percentile(sorted, 0.01);
+  const hi = percentile(sorted, 0.99);
   const range = hi - lo;
   if (range < Math.max(0.0001, CONFIG.render.minContrast)) return null;
 
   const gamma = Math.max(0.25, CONFIG.render.heightMapGamma ?? 1.0);
+  const levels = Math.max(0, Math.round(CONFIG.render.heightMapLevels || 0));
   const height = new Float32Array(w * h);
   let sum = 0, sumSq = 0;
   for (let i = 0; i < w * h; i++) {
-    let v = (filtered[i] - lo) / range;
-    v = Math.pow(Math.max(0, Math.min(1, v)), gamma);
+    let v = Math.max(0, Math.min(1, (raw[i] - lo) / range));
+    v = Math.pow(v, gamma);
+    if (levels > 1) v = Math.round(v * (levels - 1)) / (levels - 1);
     height[i] = v;
     sum += v; sumSq += v * v;
   }
@@ -782,7 +788,7 @@ async function buildSurfaceMapsFromUrl(url) {
   const stddev = Math.sqrt(Math.max(0, sumSq / (w * h) - mean * mean));
 
   const heightTexture = canvasTextureFromGray(
-    height, w, h, CONFIG.render.heightMapResolution || 192, false);
+    height, w, h, CONFIG.render.heightMapResolution || 512, false);
 
   return {
     width: heightTexture.userData.size, height: heightTexture.userData.size,
@@ -815,6 +821,7 @@ function applySurfaceMapsToMaterial(material, maps, allowHeightRelief) {
     data.heightUniforms.uHeightMap.value = maps.heightTexture;
     data.heightUniforms.uHeightScale.value = CONFIG.render.heightMapDepth * maps.depthScale;
     data.heightUniforms.uHeightMapTexel.value.set(1 / maps.width, 1 / maps.height);
+    data.heightUniforms.uHeightSampleStep.value = Math.max(1, maps.width / 192);
     data.heightUniforms.uHeightEnabled.value = (heightMapsEnabled && allowHeightRelief) ? 1 : 0;
   }
 }
@@ -843,10 +850,13 @@ function patchHeightMaterial(material) {
     shader.uniforms.uHeightMap = { value: material.userData.heightTexture || flatHeightTexture };
     shader.uniforms.uHeightEnabled = { value: (heightMapsEnabled && !!material.userData.heightTexture) ? 1 : 0 };
     shader.uniforms.uHeightScale = { value: (CONFIG.render.heightMapDepth ?? 0.03) * (material.userData.heightDepthScale || 1) };
-    shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 16, 1 / 16) };
+    shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 512, 1 / 512) };
+    shader.uniforms.uHeightSampleStep = { value: 1.0 };
     shader.uniforms.uHeightAO = { value: CONFIG.render.heightMapAO ?? 0.20 };
-    shader.uniforms.uHeightEdge = { value: CONFIG.render.heightMapEdge ?? 0.55 };
+    shader.uniforms.uHeightEdge = { value: CONFIG.render.heightMapEdge ?? 0.45 };
     shader.uniforms.uHeightEdgeThreshold = { value: CONFIG.render.heightMapEdgeThreshold ?? 0.05 };
+    shader.uniforms.uHeightLift = { value: CONFIG.render.heightMapLift ?? 0.05 };
+    shader.uniforms.uHeightLightDir = heightLightDir;
     shader.uniforms.uHeightNormalStrength = { value: (CONFIG.render.heightMapNormalStrength ?? 2.4) };
 
     shader.fragmentShader = shader.fragmentShader.replace(
@@ -856,9 +866,12 @@ uniform sampler2D uHeightMap;
 uniform float uHeightEnabled;
 uniform float uHeightScale;
 uniform vec2 uHeightMapTexel;
+uniform float uHeightSampleStep;
 uniform float uHeightAO;
 uniform float uHeightEdge;
 uniform float uHeightEdgeThreshold;
+uniform float uHeightLift;
+uniform vec3 uHeightLightDir;
 uniform float uHeightNormalStrength;
 vec2 gHeightUv;
 vec3 gHeightNormal = vec3(0.0, 0.0, 1.0);
@@ -916,11 +929,12 @@ vec2 heightParallaxUv(vec2 uv, vec3 viewDir) {
       gHeightUv = heightUv;
     }
 
+    vec2 hStep = uHeightMapTexel * uHeightSampleStep;
     float hC = texture2D(uHeightMap, heightUv).r;
-    float hL = texture2D(uHeightMap, heightUv - vec2(uHeightMapTexel.x, 0.0)).r;
-    float hR = texture2D(uHeightMap, heightUv + vec2(uHeightMapTexel.x, 0.0)).r;
-    float hD = texture2D(uHeightMap, heightUv - vec2(0.0, uHeightMapTexel.y)).r;
-    float hU = texture2D(uHeightMap, heightUv + vec2(0.0, uHeightMapTexel.y)).r;
+    float hL = texture2D(uHeightMap, heightUv - vec2(hStep.x, 0.0)).r;
+    float hR = texture2D(uHeightMap, heightUv + vec2(hStep.x, 0.0)).r;
+    float hD = texture2D(uHeightMap, heightUv - vec2(0.0, hStep.y)).r;
+    float hU = texture2D(uHeightMap, heightUv + vec2(0.0, hStep.y)).r;
 
     // Height normal: central differences of the height field, no normal-map asset.
     gHeightNormal = normalize(vec3(
@@ -932,15 +946,20 @@ vec2 heightParallaxUv(vec2 uv, vec3 viewDir) {
     float cavity = clamp((hL + hR + hD + hU) * 0.25 - hC, 0.0, 1.0);
     heightAO = 1.0 - cavity * uHeightAO;
 
-    // Crisp relief outline: a thin highlight on the light-facing side of a
-    // height step and a thin shadow on the opposite side.
+    // Crisp relief outline follows the scene light: project the view-space
+    // light direction into this surface's tangent space, then put a thin
+    // highlight on the light-facing side of a height step and a thin shadow on
+    // the opposite side.
     vec2 edge = vec2(hR - hL, hU - hD);
     float edgeMag = length(edge);
     float edgeMask = smoothstep(uHeightEdgeThreshold, uHeightEdgeThreshold + 0.02, edgeMag);
-    float slope = dot(edge, vec2(-0.7071, 0.7071));
+    vec2 lightTS = vec2(dot(uHeightLightDir, gHeightTBN[0]), dot(uHeightLightDir, gHeightTBN[1]));
+    float lightLen = length(lightTS);
+    lightTS = lightLen > 0.0001 ? lightTS / lightLen : vec2(-0.7071, 0.7071);
+    float slope = dot(edge, lightTS);
     float lit = smoothstep(0.0, 0.02, slope);
     float shade = smoothstep(0.0, 0.02, -slope);
-    heightEdge = 1.0 + edgeMask * (lit - shade) * uHeightEdge;
+    heightEdge = 1.0 + uHeightLift + edgeMask * (lit - shade * 0.75) * uHeightEdge;
   }
   vec4 sampledDiffuseColor = texture2D( map, heightUv );
   #ifdef DECODE_VIDEO_TEXTURE
@@ -1711,6 +1730,10 @@ function updateCelestialBodies(delta) {
   }
 }
 
+const _heightLightWorld = new THREE.Vector3();
+const _heightLightView = new THREE.Vector3();
+const _heightLightInvQuat = new THREE.Quaternion();
+
 function updateLighting() {
   const angle = CONFIG.dayCycle.startAngleRadians + (dayElapsed / CONFIG.dayCycle.cycleSeconds) * Math.PI * 2;
   const sinAngle = Math.sin(angle);
@@ -1726,6 +1749,12 @@ function updateLighting() {
   const activeAngle = sinAngle >= 0 ? angle : angle + Math.PI;
   const lx = Math.cos(activeAngle);
   const ly = Math.sin(activeAngle);
+  // Directional-light vector is (lx, ly, 0); put it in view space for the
+  // heightmap bevel (its tangent frame lives in view space).
+  _heightLightWorld.set(lx, ly, 0);
+  _heightLightView.copy(_heightLightWorld).applyQuaternion(
+    _heightLightInvQuat.copy(camera.quaternion).invert()).normalize();
+  heightLightDir.value.copy(_heightLightView);
   const ld = 100;
   sunLight.position.set(camera.position.x + lx * ld, camera.position.y + ly * ld, camera.position.z);
   sunLight.target.position.copy(camera.position);

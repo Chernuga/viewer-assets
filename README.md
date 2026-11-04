@@ -9,22 +9,27 @@ shading live. The choice is stored in `localStorage`; the default comes from
 
 **Algorithm** (`index.html`, "PROCEDURAL HEIGHT MAPS"):
 
-1. Read the albedo texture and compute Rec. 709 luminance, alpha-masking cutout
-   pixels so they do not create false height.
-2. Reject single-pixel colour noise with a wrapping 3x3 median filter, then a
-   3x3 gaussian blur to produce coherent slopes.
-3. Contrast-stretch the 2nd..98th percentile of that field to 0..1, apply the
-   configured gamma, and use it directly as the heightmap.
+1. Read the albedo texture, convert to linear light and compute Rec. 709
+   luminance, alpha-masking cutout pixels so they do not create false height.
+2. Run an edge-preserving bilateral filter (3x3, colour-range weighted) to
+   remove pixel noise without turning brick mortar lines into soft lumps.
+3. Add a controlled amount of the high-frequency detail back, contrast-stretch
+   the 1st..99th percentile to 0..1, apply gamma, and optionally quantize the
+   result into flat height levels.
 4. The shader consumes that heightmap, not a normal-map image:
    - tangent-space normals are derived from height differences in the fragment
      shader;
    - a crisp edge term adds a thin highlight on the light-facing side of each
      height step and a thin shadow on the opposite side ("outlined" relief);
+     the direction comes from the scene's current sun/moon vector, projected
+     into each surface's tangent space, so the bevel moves with the day cycle;
    - low areas are darkened with a height cavity/AO term;
    - albedo UVs are shifted with a 16-layer parallax walk for visible depth.
-   The height field is expanded to 192x with nearest-neighbour steps, so the
-   bevels stay one pixel wide at screen resolution instead of being smoothed.
-   The WebGL canvas renders at up to 2.5x device pixel ratio for the same reason.
+   The height field is expanded to 512x with nearest-neighbour steps, so the
+   bevels stay crisp at screen resolution instead of being smoothed. The
+   shader widens the edge taps to keep the outline width stable as the
+   heightmap resolution changes. The WebGL canvas renders at up to 3x device
+   pixel ratio for the same reason.
 5. Everything is surface shading only. Block geometry is not displaced or
    tessellated; there is no real height.
 
@@ -59,21 +64,27 @@ Config knobs (`viewer/config.json`):
 "render": {
   "heightMap": true,
   "heightMapDepth": 0.03,
-  "heightMapResolution": 192,
+  "heightMapResolution": 512,
+  "heightMapDetail": 0.9,
+  "heightMapLevels": 0,
   "heightMapAO": 0.20,
-  "heightMapEdge": 0.55,
+  "heightMapEdge": 0.45,
   "heightMapEdgeThreshold": 0.05,
+  "heightMapLift": 0.05,
   "heightMapGamma": 1.0,
   "heightMapNormalStrength": 2.4
 }
 ```
 
 `heightMapDepth` is the maximum UV shift for parallax (0 keeps normals/AO only),
-`heightMapResolution` is the nearest-neighbour heightmap size (192 default),
-`heightMapEdge` / `heightMapEdgeThreshold` control the outlined bevel, 
-`heightMapAO` is cavity-darkening strength, and `heightMapNormalStrength`
-scales the height-derived normal relief. Low-contrast textures automatically
-receive shallower parallax.
+`heightMapResolution` is the nearest-neighbour heightmap size (512 default,
+512 max), `heightMapDetail` controls how much high-frequency detail is kept,
+`heightMapLevels` quantizes the height field (0 = off), `heightMapEdge` /
+`heightMapEdgeThreshold` control the outlined bevel, `heightMapLift` adds a
+small overall brightness lift when heightmaps are on, `heightMapAO` is
+cavity-darkening strength, and `heightMapNormalStrength` scales the
+height-derived normal relief. Low-contrast textures automatically receive
+shallower parallax.
 
 Animated textures, translucent blocks, and flat cutout models skip parallax but
 keep height-derived normals; the toggle removes the whole heightmap shading

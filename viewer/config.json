@@ -52,10 +52,13 @@
     "heightMapDepth": 0.03,
     "heightMapGamma": 1.0,
     "heightMapNormalStrength": 2.4,
-    "heightMapAO": 0.2,
-    "heightMapResolution": 192,
-    "heightMapEdge": 0.55,
-    "heightMapEdgeThreshold": 0.05
+    "heightMapAO": 0.12,
+    "heightMapResolution": 512,
+    "heightMapEdge": 0.45,
+    "heightMapEdgeThreshold": 0.05,
+    "heightMapDetail": 0.9,
+    "heightMapLevels": 0,
+    "heightMapLift": 0.05
   },
   "lighting": {
     "ambientDay": 0.45,
