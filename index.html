@@ -13,6 +13,9 @@
     .controls { display:flex; flex-direction:column; gap:8px; }
     .btn { border-radius:10px; padding:10px 12px; background:rgba(255,255,255,0.03); color:var(--accent); border:1px solid rgba(57, 255, 20, 0.2); font-weight:700; cursor: pointer; text-transform: uppercase; font-size: 11px; }
     .btn.secondary { color: #ff9999; border-color: rgba(255,100,100,0.3); }
+    .btn.toggle { color: #9fb7ff; border-color: rgba(110, 150, 255, 0.3); }
+    .btn.toggle.on { color: #b8ffb0; border-color: rgba(57, 255, 20, 0.45); background: rgba(57, 255, 20, 0.10); }
+    .btn.toggle.off { color: rgba(255,255,255,0.45); border-color: rgba(255,255,255,0.12); }
     .viewer { flex:1; position:relative; }
     #webgl-canvas { display:block; width:100%; height:100%; }
     .hud { position:absolute; left:12px; bottom:12px; padding:8px 10px; border-radius:10px; background:var(--glass); font-size:12px; backdrop-filter: blur(6px); pointer-events:none; }
@@ -25,12 +28,13 @@
     <textarea id="commands" class="cmd" placeholder="/setblock 0 0 0 end_portal&#10;/setblock 1 0 0 stone&#10;/fill 2 0 0 4 2 2 stone"></textarea>
     <div class="controls">
       <button id="renderBtn" class="btn">Build</button>
+      <button id="heightmapBtn" class="btn toggle on" aria-pressed="true">Heightmaps: On</button>
       <button id="refreshShaBtn" class="btn secondary">Refresh SHA</button>
     </div>
   </div>
   <div class="viewer">
     <canvas id="webgl-canvas"></canvas>
-    <div class="hud">Build with: /setblock x y z block_id[prop=val,...] • /fill x1 y1 z1 x2 y2 z2 block_id[prop=val,...]</div>
+    <div class="hud">Build with: /setblock x y z block_id[prop=val,...] • /fill x1 y1 z1 x2 y2 z2 block_id[prop=val,...] • H toggles heightmaps</div>
     <div id="errorOverlay" class="error-overlay"></div>
   </div>
 </div>
@@ -78,12 +82,14 @@ const CONFIG_DEFAULTS = {
   },
   animation: { shaderSpeed: 0.0001 },
   render: {
-    normalMap: true,
-    normalStrength: 0.9,
-    normalEdgeBoost: 3.0,
     minContrast: 0.03,
     dedupeCoincidentFaces: true,
     concurrency: 12,
+    heightMap: true,
+    heightMapDepth: 0.03,
+    heightMapAO: 0.50,
+    heightMapGamma: 1.0,
+    heightMapNormalStrength: 2.1,
   },
   lighting: {
     ambientDay: 0.55, ambientNight: 0.30,
@@ -184,8 +190,8 @@ const worldGroup = new THREE.Group();
 scene.add(worldGroup);
 
 const textureCache = new Map();
-const normalMapCache = new Map();
-const normalMapPending = new Map();
+const HEIGHTMAP_STORAGE_KEY = 'voxelBuilderHeightMapsEnabled';
+let heightMapsEnabled = true;
 const modelCache = new Map();
 const modelPending = new Map();
 const blockstateCache = new Map();
@@ -202,6 +208,10 @@ const blockMaterialCache = new Map();
 
 const magentaTex = new THREE.DataTexture(new Uint8Array([255,0,255,255]), 1, 1, THREE.RGBAFormat);
 magentaTex.needsUpdate = true;
+
+const flatHeightTexture = new THREE.DataTexture(new Uint8Array([128,128,128,255]), 1, 1, THREE.RGBAFormat);
+flatHeightTexture.needsUpdate = true;
+flatHeightTexture.colorSpace = THREE.NoColorSpace;
 
 let skyTexture = null;
 let skyMesh = null;
@@ -620,67 +630,83 @@ function getTexture(texPath) {
   return tex;
 }
 
-/* ============================= NORMAL MAPS ============================= */
+/* ============================= PROCEDURAL HEIGHT MAPS ============================= */
 
 function loadImage(url) {
   return new Promise((resolve, reject) => {
-    const img = new Image(); img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img); img.onerror = () => reject(new Error(`Failed ${url}`));
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed ${url}`));
     img.src = url;
   });
 }
 
-async function buildNormalMapFromUrl(url) {
-  const img = await loadImage(url);
-  const w = img.width, h = img.height;
-  const srcCanvas = document.createElement('canvas');
-  srcCanvas.width = w; srcCanvas.height = h;
-  const srcCtx = srcCanvas.getContext('2d');
-  srcCtx.drawImage(img, 0, 0);
-  const src = srcCtx.getImageData(0, 0, w, h).data;
+const surfaceMapCache = new Map();
+const surfaceMapPending = new Map();
 
-  const lum = (x, y) => {
-    const xx = ((x % w) + w) % w;
-    const yy = ((y % h) + h) % h;
-    const i = (yy * w + xx) * 4;
-    return (src[i] * 0.299 + src[i+1] * 0.587 + src[i+2] * 0.114) / 255;
-  };
+function wrapIndex(v, n) {
+  return ((v % n) + n) % n;
+}
 
-  let sum = 0, sumSq = 0;
-  for (let i = 0; i < w * h; i++) {
-    const l = (src[i*4] * 0.299 + src[i*4+1] * 0.587 + src[i*4+2] * 0.114) / 255;
-    sum += l; sumSq += l * l;
-  }
-  const mean = sum / (w * h);
-  const variance = Math.max(0, sumSq / (w * h) - mean * mean);
-  const contrast = Math.sqrt(variance);
-  if (contrast < CONFIG.render.minContrast) return null;
-
-  const outCanvas = document.createElement('canvas');
-  outCanvas.width = w; outCanvas.height = h;
-  const outCtx = outCanvas.getContext('2d');
-  const out = outCtx.createImageData(w, h);
-  const boost = CONFIG.render.normalEdgeBoost;
-
+/* Median filter removes single-pixel colour noise before it becomes fake terrain. */
+function median3(src, w, h) {
+  const out = new Float32Array(w * h);
+  const window = new Float32Array(9);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const gx = lum(x + 1, y) - lum(x - 1, y);
-      const gy = lum(x, y + 1) - lum(x, y - 1);
-      let nx = -gx * boost, ny = -gy * boost, nz = 1.0;
-      const l = Math.sqrt(nx*nx + ny*ny + nz*nz);
-      nx /= l; ny /= l; nz /= l;
-      const i = (y * w + x) * 4;
-      out.data[i]   = Math.round((nx * 0.5 + 0.5) * 255);
-      out.data[i+1] = Math.round((ny * 0.5 + 0.5) * 255);
-      out.data[i+2] = Math.round((nz * 0.5 + 0.5) * 255);
-      out.data[i+3] = 255;
+      let p = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          window[p++] = src[wrapIndex(y + dy, h) * w + wrapIndex(x + dx, w)];
+        }
+      }
+      window.sort();
+      out[y * w + x] = window[4];
     }
   }
-  outCtx.putImageData(out, 0, 0);
+  return out;
+}
 
-  const tex = new THREE.CanvasTexture(outCanvas);
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
+/* Small gaussian kernel; gives the height field coherent slopes instead of stair steps. */
+function blur3(src, w, h) {
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const weight = (dx === 0 ? 2 : 1) * (dy === 0 ? 2 : 1);
+          sum += src[wrapIndex(y + dy, h) * w + wrapIndex(x + dx, w)] * weight;
+        }
+      }
+      out[y * w + x] = sum / 16;
+    }
+  }
+  return out;
+}
+
+function percentile(sorted, p) {
+  if (sorted.length === 0) return 0;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
+}
+
+function canvasTextureFromGray(values, w, h, linear) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) {
+    const v = Math.max(0, Math.min(255, Math.round(values[i] * 255)));
+    img.data[i * 4] = v;
+    img.data[i * 4 + 1] = v;
+    img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = linear ? THREE.LinearFilter : THREE.NearestFilter;
+  tex.minFilter = linear ? THREE.LinearFilter : THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
@@ -688,32 +714,249 @@ async function buildNormalMapFromUrl(url) {
   return tex;
 }
 
-function getNormalMap(url) {
-  if (normalMapCache.has(url)) return normalMapCache.get(url);
-  if (normalMapPending.has(url)) return null;
-  const p = buildNormalMapFromUrl(url)
-    .then((tex) => { normalMapCache.set(url, tex); return tex; })
-    .catch((err) => { console.warn(`Normal map failed for ${url}:`, err); return null; });
-  normalMapPending.set(url, p);
+/*
+ * Height inference:
+ *   1. perceptual luminance (Rec. 709) from the albedo, alpha-masked;
+ *   2. 3x3 median filter to reject single-pixel noise;
+ *   3. 3x3 gaussian blur to make continuous slopes;
+ *   4. percentile contrast stretch (2%..98%) to use the full 0..1 range;
+ *   5. gamma curve, then the shader derives normals, AO and parallax from it.
+ */
+async function buildSurfaceMapsFromUrl(url) {
+  const img = await loadImage(url);
+  const w = img.width, h = img.height;
+  if (!w || !h || h > w) return null;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const pixels = ctx.getImageData(0, 0, w, h).data;
+
+  const lum = new Float32Array(w * h);
+  let transparent = 0;
+  for (let i = 0; i < w * h; i++) {
+    const r = pixels[i * 4] / 255;
+    const g = pixels[i * 4 + 1] / 255;
+    const b = pixels[i * 4 + 2] / 255;
+    const a = pixels[i * 4 + 3] / 255;
+    if (a < 0.5) transparent++;
+    // Transparent pixels belong to the cutout, not to a raised surface.
+    lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) * a;
+  }
+
+  const opaque = 1 - transparent / (w * h);
+  if (opaque < 0.05) return null;
+
+  const filtered = blur3(median3(lum, w, h), w, h);
+  const sorted = Array.from(filtered).sort((a, b) => a - b);
+  const lo = percentile(sorted, 0.02);
+  const hi = percentile(sorted, 0.98);
+  const range = hi - lo;
+  if (range < Math.max(0.0001, CONFIG.render.minContrast)) return null;
+
+  const gamma = Math.max(0.25, CONFIG.render.heightMapGamma ?? 1.0);
+  const height = new Float32Array(w * h);
+  let sum = 0, sumSq = 0;
+  for (let i = 0; i < w * h; i++) {
+    let v = (filtered[i] - lo) / range;
+    v = Math.pow(Math.max(0, Math.min(1, v)), gamma);
+    height[i] = v;
+    sum += v; sumSq += v * v;
+  }
+  const mean = sum / (w * h);
+  const stddev = Math.sqrt(Math.max(0, sumSq / (w * h) - mean * mean));
+
+  const heightTexture = canvasTextureFromGray(height, w, h, true);
+
+  return {
+    width: w, height: h,
+    heightTexture,
+    // Low-contrast surfaces get proportionally shallower parallax.
+    depthScale: Math.max(0.35, Math.min(1.25, stddev / 0.22)),
+    contrast: stddev,
+  };
+}
+
+function getSurfaceMaps(url) {
+  if (surfaceMapCache.has(url)) return surfaceMapCache.get(url);
+  if (surfaceMapPending.has(url)) return null;
+  const p = buildSurfaceMapsFromUrl(url)
+    .then((maps) => { surfaceMapCache.set(url, maps); return maps; })
+    .catch((err) => { console.warn(`Surface map failed for ${url}:`, err); return null; })
+    .finally(() => { surfaceMapPending.delete(url); });
+  surfaceMapPending.set(url, p);
   return null;
 }
 
-function applyNormalMap(material, normalMap) {
-  material.normalMap = normalMap;
-  material.normalScale.set(CONFIG.render.normalStrength, CONFIG.render.normalStrength);
-  material.needsUpdate = true;
+function applySurfaceMapsToMaterial(material, maps, allowHeightRelief) {
+  if (!maps) return;
+  const data = material.userData;
+  data.heightTexture = maps.heightTexture;
+  data.heightDepthScale = maps.depthScale;
+  data.heightRelief = allowHeightRelief;
+
+  if (data.heightUniforms) {
+    data.heightUniforms.uHeightMap.value = maps.heightTexture;
+    data.heightUniforms.uHeightScale.value = CONFIG.render.heightMapDepth * maps.depthScale;
+    data.heightUniforms.uHeightMapTexel.value.set(1 / maps.width, 1 / maps.height);
+    data.heightUniforms.uHeightEnabled.value = (heightMapsEnabled && allowHeightRelief) ? 1 : 0;
+  }
 }
 
-function attachNormalMap(material, texPath) {
-  if (!CONFIG.render.normalMap) return;
+function attachSurfaceMaps(material, texPath, allowHeightRelief) {
+  if (material.userData.surfaceMapsAttached) return;
+  material.userData.surfaceMapsAttached = true;
+  material.userData.heightRelief = allowHeightRelief;
+
   const cleanPath = texPath.replace('minecraft:', '');
-  const texUrl = `${ASSET_BASE}/textures/${cleanPath}.png`;
-  const ready = getNormalMap(texUrl);
+  const url = `${ASSET_BASE}/textures/${cleanPath}.png`;
+
+  const ready = getSurfaceMaps(url);
   if (ready) {
-    applyNormalMap(material, ready);
+    applySurfaceMapsToMaterial(material, ready, allowHeightRelief);
   } else {
-    const p = normalMapPending.get(texUrl);
-    if (p) p.then((nm) => { if (nm) applyNormalMap(material, nm); });
+    const pending = surfaceMapPending.get(url);
+    if (pending) pending.then((maps) => applySurfaceMapsToMaterial(material, maps, allowHeightRelief));
+  }
+}
+
+/* Parallax occlusion mapping for MeshLambertMaterial. The height map shifts the
+ * albedo UVs before lighting; the toggle is a uniform, so no world rebuild. */
+function patchHeightMaterial(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uHeightMap = { value: material.userData.heightTexture || flatHeightTexture };
+    shader.uniforms.uHeightEnabled = { value: (heightMapsEnabled && !!material.userData.heightTexture) ? 1 : 0 };
+    shader.uniforms.uHeightScale = { value: (CONFIG.render.heightMapDepth ?? 0.03) * (material.userData.heightDepthScale || 1) };
+    shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 16, 1 / 16) };
+    shader.uniforms.uHeightAO = { value: CONFIG.render.heightMapAO ?? 0.50 };
+    shader.uniforms.uHeightNormalStrength = { value: (CONFIG.render.heightMapNormalStrength ?? 2.1) };
+
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <common>',
+      `#include <common>
+uniform sampler2D uHeightMap;
+uniform float uHeightEnabled;
+uniform float uHeightScale;
+uniform vec2 uHeightMapTexel;
+uniform float uHeightAO;
+uniform float uHeightNormalStrength;
+vec2 gHeightUv;
+vec3 gHeightNormal = vec3(0.0, 0.0, 1.0);
+mat3 gHeightTBN = mat3(1.0);
+
+vec2 heightParallaxUv(vec2 uv, vec3 viewDir) {
+  const float LAYERS = 16.0;
+  float facing = smoothstep(0.18, 0.55, abs(viewDir.z));
+  vec2 total = (viewDir.xy / max(abs(viewDir.z), 0.30)) * uHeightScale * facing;
+  total = clamp(total, vec2(-0.35), vec2(0.35));
+  vec2 delta = total / LAYERS;
+  vec2 cur = uv;
+  float layer = 0.0;
+  float h = texture2D(uHeightMap, cur).r;
+  for (int i = 0; i < 16; i++) {
+    if (h <= layer) break;
+    cur -= delta;
+    layer += 1.0 / LAYERS;
+    h = texture2D(uHeightMap, cur).r;
+  }
+  vec2 prev = cur + delta;
+  float after = h - layer;
+  float before = texture2D(uHeightMap, prev).r - layer + 1.0 / LAYERS;
+  float w = clamp(after / (after - before + 1e-5), 0.0, 1.0);
+  return mix(cur, prev, w);
+}
+`
+    );
+
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      `#ifdef USE_MAP
+  vec2 heightUv = vMapUv;
+  gHeightUv = vMapUv;
+  float heightAO = 1.0;
+  if (uHeightEnabled > 0.5) {
+    vec3 hv = normalize(vViewPosition);
+    vec3 hn = normalize(vNormal);
+    vec3 hv1 = dFdx(hv);
+    vec3 hv2 = dFdy(hv);
+    vec2 hu1 = dFdx(vMapUv);
+    vec2 hu2 = dFdy(vMapUv);
+    vec3 hp2 = cross(hv2, hn);
+    vec3 hp1 = cross(hn, hv1);
+    vec3 ht = hp2 * hu1.x + hp1 * hu2.x;
+    vec3 hb = hp2 * hu1.y + hp1 * hu2.y;
+    float hinv = inversesqrt(max(max(dot(ht, ht), dot(hb, hb)), 1e-8));
+    ht *= hinv; hb *= hinv;
+    gHeightTBN = mat3(ht, hb, hn);
+
+    vec3 viewTs = vec3(dot(hv, ht), dot(hv, hb), dot(hv, hn));
+    if (abs(viewTs.z) > 0.15) {
+      heightUv = heightParallaxUv(vMapUv, viewTs);
+      gHeightUv = heightUv;
+    }
+
+    float hC = texture2D(uHeightMap, heightUv).r;
+    float hL = texture2D(uHeightMap, heightUv - vec2(uHeightMapTexel.x, 0.0)).r;
+    float hR = texture2D(uHeightMap, heightUv + vec2(uHeightMapTexel.x, 0.0)).r;
+    float hD = texture2D(uHeightMap, heightUv - vec2(0.0, uHeightMapTexel.y)).r;
+    float hU = texture2D(uHeightMap, heightUv + vec2(0.0, uHeightMapTexel.y)).r;
+
+    // Height normal: central differences of the height field, no normal-map asset.
+    gHeightNormal = normalize(vec3(
+      (hL - hR) * uHeightNormalStrength,
+      (hD - hU) * uHeightNormalStrength,
+      1.0));
+
+    // Cavity darkening in the low parts of the height field.
+    float cavity = clamp((hL + hR + hD + hU) * 0.25 - hC, 0.0, 1.0);
+    heightAO = 1.0 - cavity * uHeightAO;
+  }
+  vec4 sampledDiffuseColor = texture2D( map, heightUv );
+  #ifdef DECODE_VIDEO_TEXTURE
+    sampledDiffuseColor = vec4( mix( pow( sampledDiffuseColor.rgb * 0.9478672986 + vec3( 0.0521327014 ), vec3( 2.4 ) ), sampledDiffuseColor.rgb * 0.0773993808, vec3( lessThanEqual( sampledDiffuseColor.rgb, vec3( 0.04045 ) ) ) ), sampledDiffuseColor.w );
+  #endif
+  diffuseColor *= sampledDiffuseColor;
+  diffuseColor.rgb *= heightAO;
+#endif`
+    );
+
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <normal_fragment_maps>',
+      `if (uHeightEnabled > 0.5) {
+  normal = normalize(gHeightTBN * gHeightNormal);
+}`
+    );
+
+    material.userData.heightUniforms = shader.uniforms;
+  };
+  material.customProgramCacheKey = () => 'procedural-heightmap-v1';
+}
+
+function updateHeightmapButton() {
+  const btn = document.getElementById('heightmapBtn');
+  if (!btn) return;
+  btn.textContent = `Heightmaps: ${heightMapsEnabled ? 'On' : 'Off'}`;
+  btn.classList.toggle('on', heightMapsEnabled);
+  btn.classList.toggle('off', !heightMapsEnabled);
+  btn.setAttribute('aria-pressed', String(heightMapsEnabled));
+  btn.title = 'Toggle heightmap shading: height normals, cavity AO and parallax (H)';
+}
+
+function initHeightmapToggle() {
+  const saved = localStorage.getItem(HEIGHTMAP_STORAGE_KEY);
+  const enabled = saved === null ? !!CONFIG.render.heightMap : saved === '1';
+  setHeightMapsEnabled(enabled, false);
+}
+
+function setHeightMapsEnabled(enabled, persist = true) {
+  heightMapsEnabled = !!enabled;
+  CONFIG.render.heightMap = heightMapsEnabled;
+  if (persist) localStorage.setItem(HEIGHTMAP_STORAGE_KEY, heightMapsEnabled ? '1' : '0');
+  updateHeightmapButton();
+  for (const material of blockMaterialCache.values()) {
+    const u = material.userData.heightUniforms;
+    if (u) u.uHeightEnabled.value = (heightMapsEnabled && material.userData.heightRelief) ? 1 : 0;
   }
 }
 
@@ -928,7 +1171,11 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
   if (tintIndex !== undefined) mat.color = getTintColor(tintIndex);
 
   const isAnimated = !!texture.userData?.frameCount;
-  if (!isAnimated && texture !== magentaTex) attachNormalMap(mat, texPath);
+  const allowHeightRelief = !flat && !translucent;
+  if (!isAnimated && texture !== magentaTex) {
+    if (allowHeightRelief) patchHeightMaterial(mat);
+    attachSurfaceMaps(mat, texPath, allowHeightRelief);
+  }
 
   blockMaterialCache.set(key, mat);
   return mat;
@@ -1491,7 +1738,7 @@ function animate() {
 
 async function forceRefreshSha() {
   localStorage.removeItem(SHA_KEY);
-  textureCache.clear(); normalMapCache.clear(); normalMapPending.clear();
+  textureCache.clear(); surfaceMapCache.clear(); surfaceMapPending.clear();
   modelCache.clear(); modelPending.clear();
   blockstateCache.clear(); blockstatePending.clear();
   defaultPropsCache.clear();
@@ -1517,6 +1764,7 @@ async function forceRefreshSha() {
   REPO_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}`;
   console.log('Refreshed asset base:', ASSET_BASE);
   await loadConfig();
+  initHeightmapToggle();
   await setupSky();
   await setupCelestialBodies();
   await setupStars();
@@ -1524,7 +1772,14 @@ async function forceRefreshSha() {
 }
 
 document.getElementById('renderBtn').addEventListener('click', () => { saveCommandsToStorage(); build(); });
+document.getElementById('heightmapBtn').addEventListener('click', () => { setHeightMapsEnabled(!heightMapsEnabled); });
 document.getElementById('refreshShaBtn').addEventListener('click', () => { forceRefreshSha(); });
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  const tag = (e.target && e.target.tagName) || '';
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
+  if (e.key === 'h' || e.key === 'H') setHeightMapsEnabled(!heightMapsEnabled);
+});
 window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 
 (async () => {
@@ -1533,6 +1788,7 @@ window.addEventListener('resize', () => { camera.aspect = window.innerWidth / wi
   REPO_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}`;
   console.log('Asset base:', ASSET_BASE);
   await loadConfig();
+  initHeightmapToggle();
   await setupSky();
   await setupCelestialBodies();
   await setupStars();

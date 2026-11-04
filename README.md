@@ -1,3 +1,52 @@
+# Voxel Builder — asset viewer
+
+Procedural heightmaps are generated from each block texture at runtime; no
+ready-made PBR/heightmap assets and no normal-map textures are used.
+
+**Toggle:** the `Heightmaps: On/Off` button (or `H`) switches the heightmap
+shading live. The choice is stored in `localStorage`; the default comes from
+`viewer/config.json` -> `render.heightMap`.
+
+**Algorithm** (`index.html`, "PROCEDURAL HEIGHT MAPS"):
+
+1. Read the albedo texture and compute Rec. 709 luminance, alpha-masking cutout
+   pixels so they do not create false height.
+2. Reject single-pixel colour noise with a wrapping 3x3 median filter, then a
+   3x3 gaussian blur to produce coherent slopes.
+3. Contrast-stretch the 2nd..98th percentile of that field to 0..1, apply the
+   configured gamma, and use it directly as the heightmap.
+4. The shader consumes that heightmap, not a normal-map image:
+   - tangent-space normals are derived from height differences in the fragment
+     shader;
+   - low areas are darkened with a height cavity/AO term;
+   - albedo UVs are shifted with a 16-layer parallax walk for visible depth.
+5. Everything is surface shading only. Block geometry is not displaced or
+   tessellated; there is no real height.
+
+Config knobs (`viewer/config.json`):
+
+```json
+"render": {
+  "heightMap": true,
+  "heightMapDepth": 0.03,
+  "heightMapAO": 0.50,
+  "heightMapGamma": 1.0,
+  "heightMapNormalStrength": 2.1
+}
+```
+
+`heightMapDepth` is the maximum UV shift for parallax (0 keeps normals/AO only),
+`heightMapAO` is cavity-darkening strength, and `heightMapNormalStrength`
+scales the height-derived normal relief. Low-contrast textures automatically
+receive shallower parallax.
+
+Animated textures, translucent blocks, and flat cutout models skip parallax but
+keep height-derived normals; the toggle removes the whole heightmap shading
+pass. Running the heightmap pipeline needs nothing beyond the existing albedo
+files.
+
+## TODO
+
 Currently broken or missing
 1. Block entities with no JSON geometry
 These still render as stone-textured cubes or empty:

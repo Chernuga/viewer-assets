@@ -46,11 +46,13 @@
     "shaderSpeed": 0.0001
   },
   "render": {
-    "normalMap": false,
-    "normalStrength": 0.9,
-    "normalEdgeBoost": 3.0,
     "minContrast": 0.03,
-    "concurrency": 120
+    "concurrency": 120,
+    "heightMap": true,
+    "heightMapDepth": 0.03,
+    "heightMapGamma": 1.0,
+    "heightMapNormalStrength": 2.1,
+    "heightMapAO": 0.5
   },
   "lighting": {
     "ambientDay": 0.45,
