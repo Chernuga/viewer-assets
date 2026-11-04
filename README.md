@@ -15,16 +15,19 @@ shading live. The choice is stored in `localStorage`; the default comes from
    remove pixel noise without turning brick mortar lines into soft lumps.
 3. Add a controlled amount of the high-frequency detail back, contrast-stretch
    the 1st..99th percentile to 0..1, apply gamma, and optionally quantize the
-   result into flat height levels.
+   result into flat height levels. Brightness is used directly: the darkest
+   pixels are the lowest points and the brightest are the highest (no
+   inversion).
 4. The shader consumes that heightmap, not a normal-map image:
    - tangent-space normals are derived from height differences in the fragment
      shader;
-   - a crisp edge term adds a thin highlight on one side of each height step
-     and a thin shadow on the opposite side ("outlined" relief). It follows the
-     time-of-day sun/moon direction, but the conversion happens per face in the
-     vertex shader using per-face tangent/bitangent attributes; the fragment
-     only does one dot. There is no per-fragment world-to-tangent light
-     transform;
+   - a crisp edge term adds a thin highlight on the side of each height step
+     whose surface normal faces the light, and a shadow on the opposite side
+     ("outlined" relief). A height rise is lit where the gradient points away
+     from the light, so dark mortar lines stay recessed. The time-of-day
+     sun/moon direction is converted per face in the vertex shader using
+     per-face tangent/bitangent attributes; the fragment only does one dot.
+     There is no per-fragment world-to-tangent light transform;
    - low areas are darkened with a height cavity/AO term.
    The height field is expanded to 512x with nearest-neighbour steps, so the
    bevels stay crisp at screen resolution instead of being smoothed. The

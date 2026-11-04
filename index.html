@@ -952,10 +952,12 @@ mat3 gHeightTBN = mat3(1.0);
 
     // Crisp relief outline. The sun/moon direction is converted to texture
     // space per face in the vertex shader; the fragment only does one dot.
+    // `edge` is the height gradient; the surface normal tilts against it, so
+    // the lit side is where the gradient points *away* from the light.
     vec2 edge = vec2(hR - hL, hU - hD);
     float edgeMag = length(edge);
     float edgeMask = smoothstep(uHeightEdgeThreshold, uHeightEdgeThreshold + 0.02, edgeMag);
-    float slope = dot(edge, vHeightLightTS);
+    float slope = -dot(edge, vHeightLightTS);
     float lit = smoothstep(0.0, 0.02, slope);
     float shade = smoothstep(0.0, 0.02, -slope);
     heightEdge = 1.0 + uHeightLift + edgeMask * (lit - shade * 0.75) * uHeightEdge;
