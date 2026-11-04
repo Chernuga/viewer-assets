@@ -952,7 +952,7 @@ mat3 gHeightTBN = mat3(1.0);
 
     // Crisp relief outline. The sun/moon direction is converted to texture
     // space per face in the vertex shader; the fragment only does one dot.
-    // `edge` is the height gradient; the surface normal tilts against it, so
+    // edge is the height gradient; the surface normal tilts against it, so
     // the lit side is where the gradient points *away* from the light.
     vec2 edge = vec2(hR - hL, hU - hD);
     float edgeMag = length(edge);
