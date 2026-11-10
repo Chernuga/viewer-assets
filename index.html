@@ -53,6 +53,7 @@
           <input id="fovSlider" type="range" min="30" max="110" step="1" value="70" />
         </div>
         <button id="heightmapBtn" class="btn toggle on" aria-pressed="true">Heightmaps: On</button>
+        <button id="reflectionsBtn" class="btn toggle off" aria-pressed="false">Reflections: Off</button>
         <button id="cameraBtn" class="btn toggle on" aria-pressed="true" title="Switch between the creative first-person camera and the orbit camera">Camera: Creative</button>
         <button id="refreshShaBtn" class="btn secondary">Refresh SHA</button>
       </div>
@@ -114,6 +115,7 @@ const CONFIG_DEFAULTS = {
     dedupeCoincidentFaces: true,
     concurrency: 12,
     heightMap: true,
+    reflections: false,
     heightMapResolution: 512,
     heightMapDetail: 0.9,
     heightMapLevels: 0,
@@ -227,6 +229,25 @@ controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIG
 
 const worldGroup = new THREE.Group();
 scene.add(worldGroup);
+
+/* ============================= REFLECTIONS ============================= */
+
+/* A 128px cube probe rendered from the player's eye. Reflective block
+ * materials sample it with Three's built-in Lambert envMap path; the toggle
+ * only changes reflectivity and stops/starts the six-face captures. */
+const REFLECTION_TEXTURE_SIZE = 128;
+const REFLECTION_INTERVAL = 0.35;
+const reflectionTarget = new THREE.WebGLCubeRenderTarget(REFLECTION_TEXTURE_SIZE);
+reflectionTarget.texture.generateMipmaps = false;
+reflectionTarget.texture.minFilter = THREE.LinearFilter;
+reflectionTarget.texture.magFilter = THREE.LinearFilter;
+const reflectionCamera = new THREE.CubeCamera(0.1, 3000, reflectionTarget);
+scene.add(reflectionCamera);
+const reflectionTexture = reflectionTarget.texture;
+const REFLECTION_STORAGE_KEY = 'voxelBuilderReflectionsEnabled';
+let reflectionsEnabled = false;
+let reflectionTimer = 0;
+let reflectionDirty = true;
 
 /* Collision world rebuilt with the geometry: full cubes live in a Set, the
  * rarer partial shapes (slabs, stairs, fences, plants...) in a Map. */
@@ -1064,6 +1085,37 @@ function setHeightMapsEnabled(enabled, persist = true) {
   }
 }
 
+function updateReflectionButton() {
+  const btn = document.getElementById('reflectionsBtn');
+  if (!btn) return;
+  btn.textContent = `Reflections: ${reflectionsEnabled ? 'On' : 'Off'}`;
+  btn.classList.toggle('on', reflectionsEnabled);
+  btn.classList.toggle('off', !reflectionsEnabled);
+  btn.setAttribute('aria-pressed', String(reflectionsEnabled));
+  btn.title = 'Toggle the real-time cube-map reflections on water, ice, glass and metal blocks';
+}
+
+function initReflectionToggle() {
+  const saved = localStorage.getItem(REFLECTION_STORAGE_KEY);
+  const enabled = saved === null ? !!CONFIG.render.reflections : saved === '1';
+  setReflectionsEnabled(enabled, false);
+}
+
+function setReflectionsEnabled(enabled, persist = true) {
+  reflectionsEnabled = !!enabled;
+  CONFIG.render.reflections = reflectionsEnabled;
+  if (persist) localStorage.setItem(REFLECTION_STORAGE_KEY, reflectionsEnabled ? '1' : '0');
+  if (reflectionsEnabled) {
+    reflectionDirty = true;
+    reflectionTimer = REFLECTION_INTERVAL;
+  }
+  for (const material of blockMaterialCache.values()) {
+    if (!material.userData.reflective) continue;
+    material.reflectivity = reflectionsEnabled ? material.userData.reflectionStrength : 0;
+  }
+  updateReflectionButton();
+}
+
 /* ============================= MODEL / BLOCKSTATE LOADING ============================= */
 
 async function loadModel(modelName) {
@@ -1259,6 +1311,25 @@ function isTranslucentBlock(id) {
   return TRANSLUCENT_BLOCKS.has(b) || b.includes('stained_glass');
 }
 
+/* Which albedo textures get a reflective material, and how strong the
+ * reflection mix is. Kept deliberately small and glossy. */
+const REFLECTIVE_TEXTURES = [
+  { re: /(^|\/)water_(still|flow|overlay)$/, strength: 0.55 },
+  { re: /(^|\/)(ice|blue_ice|frosted_ice|packed_ice)$/, strength: 0.45 },
+  { re: /glass/, strength: 0.34 },
+  { re: /(iron|gold|diamond|emerald|netherite|lapis|redstone|coal|raw_iron|raw_gold|raw_copper)_block$/, strength: 0.3 },
+  { re: /(copper_block|exposed_copper|weathered_copper|oxidized_copper|cut_copper)/, strength: 0.28 },
+  { re: /amethyst_block$/, strength: 0.25 },
+];
+
+function getReflectionStrength(texPath) {
+  const clean = texPath.replace('minecraft:', '');
+  for (const rule of REFLECTIVE_TEXTURES) {
+    if (rule.re.test(clean)) return rule.strength;
+  }
+  return 0;
+}
+
 function getBlockMaterial(texPath, tintIndex, translucent, flat) {
   const key = texPath + '|' + (tintIndex === undefined ? -1 : tintIndex) + '|' + (translucent ? 'T' : 'O') + '|' + (flat ? 'D' : 'S');
   let mat = blockMaterialCache.get(key);
@@ -1273,6 +1344,15 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
     depthWrite: !translucent,
   });
   if (tintIndex !== undefined) mat.color = getTintColor(tintIndex);
+
+  const reflectionStrength = getReflectionStrength(texPath);
+  if (reflectionStrength > 0) {
+    mat.envMap = reflectionTexture;
+    mat.combine = THREE.MixOperation;
+    mat.reflectivity = reflectionsEnabled ? reflectionStrength : 0;
+    mat.userData.reflective = true;
+    mat.userData.reflectionStrength = reflectionStrength;
+  }
 
   // Animated textures get the same procedural relief; their heightmap covers
   // one frame and the shader folds the frame V range onto it.
@@ -1910,6 +1990,7 @@ async function build() {
   console.log(`Pass 2 (emit): ${infos.length} blocks in ${(t2 - t1).toFixed(0)} ms`);
 
   flushBuckets();
+  reflectionDirty = true;
   updatePlayerSpawnFromWorld();
   unstuckPlayer();
   const t3 = performance.now();
@@ -2590,6 +2671,34 @@ document.getElementById('cameraBtn').addEventListener('click', () => {
   else setCameraMode('creative');
 });
 
+function captureReflections() {
+  const hidden = [];
+  for (const mesh of worldGroup.children) {
+    if (mesh.material && mesh.material.userData && mesh.material.userData.reflective) {
+      mesh.visible = false;
+      hidden.push(mesh);
+    }
+  }
+  const gridWasVisible = gridHelper.visible;
+  gridHelper.visible = false;
+
+  reflectionCamera.position.copy(camera.position);
+  reflectionCamera.updateMatrixWorld(true);
+  reflectionCamera.update(renderer, scene);
+
+  gridHelper.visible = gridWasVisible;
+  for (const mesh of hidden) mesh.visible = true;
+}
+
+function updateReflections(delta) {
+  if (!reflectionsEnabled) return;
+  reflectionTimer += delta;
+  if (!reflectionDirty && reflectionTimer < REFLECTION_INTERVAL) return;
+  reflectionTimer = 0;
+  reflectionDirty = false;
+  captureReflections();
+}
+
 /* ============================= ANIMATION ============================= */
 
 const clock = new THREE.Clock();
@@ -2724,6 +2833,7 @@ function animate() {
   updateSky(delta);
   updateCelestialBodies(delta);
   updateLighting();
+  updateReflections(delta);
   renderer.render(scene, camera);
 }
 
@@ -2758,6 +2868,7 @@ async function forceRefreshSha() {
   console.log('Refreshed asset base:', ASSET_BASE);
   await loadConfig();
   initHeightmapToggle();
+  initReflectionToggle();
   initPlayerController();
   await setupSky();
   await setupCelestialBodies();
@@ -2767,6 +2878,7 @@ async function forceRefreshSha() {
 
 document.getElementById('renderBtn').addEventListener('click', () => { setSettingsOpen(false); saveCommandsToStorage(); build(); });
 document.getElementById('heightmapBtn').addEventListener('click', () => { setHeightMapsEnabled(!heightMapsEnabled); });
+document.getElementById('reflectionsBtn').addEventListener('click', () => { setReflectionsEnabled(!reflectionsEnabled); });
 document.getElementById('refreshShaBtn').addEventListener('click', () => { setSettingsOpen(false); forceRefreshSha(); });
 window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 
@@ -2777,6 +2889,7 @@ window.addEventListener('resize', () => { camera.aspect = window.innerWidth / wi
   console.log('Asset base:', ASSET_BASE);
   await loadConfig();
   initHeightmapToggle();
+  initReflectionToggle();
   initPlayerController();
   await setupSky();
   await setupCelestialBodies();

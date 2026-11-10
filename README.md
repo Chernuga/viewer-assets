@@ -76,6 +76,7 @@ Config knobs (`viewer/config.json`):
 ```json
 "render": {
   "heightMap": true,
+  "reflections": false,
   "heightMapResolution": 512,
   "heightMapDetail": 0.9,
   "heightMapLevels": 0,
@@ -103,12 +104,28 @@ above). Translucent blocks and flat cutout models skip the bevel but keep
 height-derived normals; the toggle removes the whole heightmap shading pass.
 Running the heightmap pipeline needs nothing beyond the existing albedo files.
 
+## Reflections
+
+**Reflections: On/Off** in Settings enables real-time cube-map reflections on
+glossy blocks: ice, all glass variants, and metal blocks (iron, gold, diamond,
+emerald, netherite, lapis, redstone, copper and raw ore blocks), plus amethyst.
+Water uses the same rule when a water model with geometry is present. Materials
+use Three.js' Lambert `envMap` path with `MixOperation`, so the reflection follows
+each face normal and blends with the existing heightmap normal.
+
+A 128px `CubeCamera` probe renders the scene from the player's eye every 0.35 s
+while the toggle is on; reflective meshes and the debug grid are hidden during
+the probe so they don't reflect themselves. Turning reflections off just sets
+the material `reflectivity` to zero and stops the six-face captures, so there is
+no world rebuild. The feature is off by default because each capture is six
+extra scene renders; the config default is `render.reflections`.
+
 ## Settings menu
 
 Only **Build** stays in the header. The **Settings** button below it opens a
 dropdown containing the field-of-view slider (30-110°), the heightmap toggle,
-the Creative/Orbit camera switch, and Refresh SHA. Clicking outside the menu or
-pressing Esc closes it.
+the reflections toggle, the Creative/Orbit camera switch, and Refresh SHA.
+Clicking outside the menu or pressing Esc closes it.
 
 The FOV slider applies live to both cameras and is stored in `localStorage`
 (`voxelBuilderFov`), overriding `player.fov` from the config on later loads.
