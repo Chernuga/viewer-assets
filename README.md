@@ -111,21 +111,23 @@ pipeline needs nothing beyond the existing albedo files.
 
 ## Reflections
 
-**Reflections** (first item in Settings) cycles `Off → Normal → Flat`. It enables
-real-time cube-map reflections on **every block side**. Each material keeps a
-per-texel reflection mask sampled as Three.js' Lambert `specularMap`: the albedo
-alpha channel is the map, so opaque texels reflect and transparent cutout pixels
-do not. Translucent sides (water, ice, glass) use a fully white mask, which
+**Reflections** (first item in Settings) cycles `Off → Normal → Minimal → Flat`.
+It enables real-time cube-map reflections on **every block side**. Each material
+keeps a per-texel reflection mask sampled as Three.js' Lambert `specularMap`: the
+albedo alpha channel is the map, so opaque texels reflect and transparent cutout
+pixels do not. Translucent sides (water, ice, glass) use a fully white mask, which
 reflects the whole side. The material class only tunes the overall strength
 (stone ~0.2, ice/glass/metal ~0.5-0.7); the per-pixel mask does the pixel-level
 selection.
 
 `Normal` mode rebuilds the reflection vector from the per-pixel heightmap normal
 (the same normal used for shading), so reflections behave like a normal map and
-follow the texture relief. `Flat` mode uses the face normal only. Both are
-selected by the `uReflectionMode` uniform; switching modes does not rebuild the
-world or recapture the probe. Animated textures use a full-strip alpha mask whose
-V offset is kept in sync with the albedo frame.
+follow the texture relief. `Minimal` samples a **16×16** version of the height
+field (one sample per source texture pixel), giving coarser reflections
+independent of the selected heightmap resolution. `Flat` uses the face normal
+only. All modes are selected by the `uReflectionMode` uniform; switching modes
+does not rebuild the world or recapture the probe. Animated textures use a
+full-strip alpha mask whose V offset is kept in sync with the albedo frame.
 
 A 128px `CubeCamera` probe renders the sky every 0.35 s while reflections are on.
 **Blocks, stars and the sun/moon are excluded from the sky probe**:
@@ -146,7 +148,7 @@ each capture is six extra scene renders; the config defaults are
 Only **Build** stays in the header. The **Settings** button below it opens a
 dropdown containing the field-of-view slider (30-110°), the reflection-strength
 slider (0-100%), the heightmap toggle, the heightmap-resolution slider
-(16/256/512 px), the reflections mode cycle (Off/Normal/Flat), the
+(16/256/512 px), the reflections mode cycle (Off/Normal/Minimal/Flat), the
 Creative/Orbit camera switch, and Refresh SHA. Clicking outside the menu or
 pressing Esc closes it.
 

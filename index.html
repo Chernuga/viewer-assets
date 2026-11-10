@@ -1042,7 +1042,7 @@ function patchHeightMaterial(material, allowHeightRelief = false) {
     shader.uniforms.uHeightLift = { value: CONFIG.render.heightMapLift ?? 0.05 };
     shader.uniforms.uHeightNormalStrength = { value: (CONFIG.render.heightMapNormalStrength ?? 2.4) };
     shader.uniforms.uHeightSun = heightSunDir;
-    shader.uniforms.uReflectionMode = { value: reflectionMode === 'normal' ? 2 : (reflectionMode === 'flat' ? 1 : 0) };
+    shader.uniforms.uReflectionMode = { value: reflectionModeValue() };
     shader.uniforms.uReflectionStrength = {
       value: reflectionsEnabled
         ? (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) * reflectionStrengthScale
@@ -1100,6 +1100,7 @@ varying vec2 vHeightLightTS;
 varying vec3 vReflectWorldPos;
 vec2 gHeightUv;
 vec3 gHeightNormal = vec3(0.0, 0.0, 1.0);
+vec3 gMinimalNormal = vec3(0.0, 0.0, 1.0);
 vec3 gFaceNormal = vec3(0.0, 0.0, 1.0);
 mat3 gHeightTBN = mat3(1.0);
 
@@ -1152,6 +1153,21 @@ mat3 gHeightTBN = mat3(1.0);
       (hD - hU) * uHeightNormalStrength,
       1.0));
 
+    // Minimal reflection mode samples a 16x16 version of the height field:
+    // one height texel per source albedo pixel, independent of the selected
+    // heightmap resolution.
+    vec2 hStep16 = vec2(
+      1.0 / (16.0 * uHeightAtlasCols),
+      1.0 / (16.0 * uHeightAtlasRows)) * vFaceScale;
+    float m16L = texture2D(uHeightMap, heightUv - vec2(hStep16.x, 0.0)).r;
+    float m16R = texture2D(uHeightMap, heightUv + vec2(hStep16.x, 0.0)).r;
+    float m16D = texture2D(uHeightMap, heightUv - vec2(0.0, hStep16.y)).r;
+    float m16U = texture2D(uHeightMap, heightUv + vec2(0.0, hStep16.y)).r;
+    gMinimalNormal = normalize(vec3(
+      (m16L - m16R) * uHeightNormalStrength,
+      (m16D - m16U) * uHeightNormalStrength,
+      1.0));
+
     // Cavity darkening in the low parts of the height field.
     float cavity = clamp((hL + hR + hD + hU) * 0.25 - hC, 0.0, 1.0);
     heightAO = 1.0 - cavity * uHeightAO;
@@ -1182,16 +1198,22 @@ mat3 gHeightTBN = mat3(1.0);
       `gFaceNormal = normal;
 if (uHeightEnabled > 0.5) {
   normal = normalize(gHeightTBN * gHeightNormal);
+  gMinimalNormal = normalize(gHeightTBN * gMinimalNormal);
+} else {
+  gMinimalNormal = gFaceNormal;
 }`
     );
 
     // Replace the stock flat envMap blend: mode 1 uses the face normal, mode 2
-    // uses the per-pixel heightmap normal so reflections behave like a normal map.
+    // uses the per-pixel heightmap normal, mode 3 uses the coarse 16x
+    // heightmap normal so reflections can be cheaper/blockier.
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <envmap_fragment>',
       `#ifdef USE_ENVMAP
   if (uReflectionMode > 0.5 && uReflectionStrength > 0.0) {
-    vec3 surfaceNormal = normalize( uReflectionMode > 1.5 ? normal : gFaceNormal );
+    vec3 surfaceNormal = normalize(
+      uReflectionMode > 2.5 ? gMinimalNormal :
+      (uReflectionMode > 1.5 ? normal : gFaceNormal));
     vec3 worldNormal = normalize( ( vec4( surfaceNormal, 0.0 ) * viewMatrix ).xyz );
     vec3 cameraToFrag = normalize( vReflectWorldPos - cameraPosition );
     vec3 reflectionDir = reflect( cameraToFrag, worldNormal );
@@ -1289,7 +1311,17 @@ function scheduleHeightMapResolution(index) {
 
 
 function reflectionModeValue() {
-  return reflectionMode === 'normal' ? 2 : (reflectionMode === 'flat' ? 1 : 0);
+  if (reflectionMode === 'normal') return 2;
+  if (reflectionMode === 'minimal') return 3;
+  if (reflectionMode === 'flat') return 1;
+  return 0;
+}
+
+function reflectionModeLabel(mode) {
+  if (mode === 'normal') return 'Normal';
+  if (mode === 'minimal') return 'Minimal';
+  if (mode === 'flat') return 'Flat';
+  return 'Off';
 }
 
 function updateReflectionStrengthUi(percent) {
@@ -1330,33 +1362,34 @@ function initReflectionStrength() {
 function updateReflectionButton() {
   const btn = document.getElementById('reflectionsBtn');
   if (!btn) return;
-  const label = reflectionMode === 'normal' ? 'Normal' : (reflectionMode === 'flat' ? 'Flat' : 'Off');
+  const label = reflectionModeLabel(reflectionMode);
   btn.textContent = `Reflections: ${label}`;
   btn.classList.toggle('on', reflectionsEnabled);
   btn.classList.toggle('off', !reflectionsEnabled);
   btn.setAttribute('aria-pressed', String(reflectionsEnabled));
-  btn.title = 'Cycle reflections: Off → Normal (per-pixel heightmap normals) → Flat (face normals)';
+  btn.title = 'Cycle reflections: Off → Normal (full heightmap normals) → Minimal (16× heightmap normals) → Flat (face normals)';
 }
 
 function initReflectionToggle() {
   const savedMode = localStorage.getItem(REFLECTION_MODE_KEY);
-  if (savedMode === 'off' || savedMode === 'normal' || savedMode === 'flat') {
+  if (savedMode === 'off' || savedMode === 'normal' || savedMode === 'minimal' || savedMode === 'flat') {
     setReflectionMode(savedMode, false);
     return;
   }
   const saved = localStorage.getItem(REFLECTION_STORAGE_KEY);
   const enabled = saved === null ? !!CONFIG.render.reflections : saved === '1';
-  const fallback = CONFIG.render.reflectionType === 'flat' ? 'flat' : 'normal';
+  const configType = CONFIG.render.reflectionType;
+  const fallback = (configType === 'flat' || configType === 'minimal') ? configType : 'normal';
   setReflectionMode(enabled ? fallback : 'off', false);
 }
 
 function setReflectionMode(mode, persist = true) {
-  if (mode !== 'off' && mode !== 'normal' && mode !== 'flat') mode = 'off';
+  if (mode !== 'off' && mode !== 'normal' && mode !== 'minimal' && mode !== 'flat') mode = 'off';
   const wasEnabled = reflectionsEnabled;
   reflectionMode = mode;
   reflectionsEnabled = mode !== 'off';
   CONFIG.render.reflections = reflectionsEnabled;
-  CONFIG.render.reflectionType = mode === 'flat' ? 'flat' : 'normal';
+  if (mode !== 'off') CONFIG.render.reflectionType = mode;
 
   if (persist) {
     localStorage.setItem(REFLECTION_MODE_KEY, reflectionMode);
@@ -1389,13 +1422,13 @@ function setReflectionMode(mode, persist = true) {
 
 function setReflectionsEnabled(enabled, persist = true) {
   if (!enabled) { setReflectionMode('off', persist); return; }
-  setReflectionMode(reflectionMode === 'off'
-    ? (CONFIG.render.reflectionType === 'flat' ? 'flat' : 'normal')
-    : reflectionMode, persist);
+  const configType = CONFIG.render.reflectionType;
+  const fallback = (configType === 'flat' || configType === 'minimal') ? configType : 'normal';
+  setReflectionMode(reflectionMode === 'off' ? fallback : reflectionMode, persist);
 }
 
 function cycleReflectionMode() {
-  const order = ['off', 'normal', 'flat'];
+  const order = ['off', 'normal', 'minimal', 'flat'];
   const next = order[(order.indexOf(reflectionMode) + 1) % order.length];
   setReflectionMode(next, true);
 }
