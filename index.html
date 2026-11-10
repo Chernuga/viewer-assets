@@ -1991,7 +1991,10 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
 
   const translucent = isTranslucentBlock(id);
   const fluid = isFluidBlock(id);
-  const selfOpaque = !shaderConfig && entriesAreOpaqueCube(entries);
+  const cutout = isCutoutBlock(id);
+  // Leaves are a cutout material: even against opaque neighbours, keep every
+  // leaf face so connected canopies stay full instead of growing holes.
+  const selfOpaque = !shaderConfig && !cutout && entriesAreOpaqueCube(entries);
   const blockKey = `${pos.x},${pos.y},${pos.z}`;
 
   for (const entry of entries) {
