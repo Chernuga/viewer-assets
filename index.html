@@ -252,6 +252,18 @@ const reflectionCamera = new THREE.CubeCamera(0.1, 3000, reflectionTargetA);
 scene.add(reflectionCamera);
 let reflectionTexture = reflectionTargetA.texture;
 let reflectionWriteTarget = reflectionTargetB;
+
+/* Sun/moon are captured separately and more often than the sky, so their
+ * movement does not force a sky probe update. */
+const CELESTIAL_INTERVAL = 0.1;
+const celestialTargetA = createReflectionTarget();
+const celestialTargetB = createReflectionTarget();
+const celestialCamera = new THREE.CubeCamera(0.1, 3000, celestialTargetA);
+scene.add(celestialCamera);
+let celestialTexture = celestialTargetA.texture;
+let celestialWriteTarget = celestialTargetB;
+let celestialTimer = 0;
+let celestialDirty = true;
 const REFLECTION_STORAGE_KEY = 'voxelBuilderReflectionsEnabled';
 const REFLECTION_MODE_KEY = 'voxelBuilderReflectionMode';
 const DEFAULT_REFLECTION_STRENGTH = 0.2;
@@ -870,7 +882,7 @@ function heightFrameFromPixels(pixels, w, h, gamma, levels) {
   for (let i = 0; i < palette.length; i++) rank.set(palette[i][0], i / denom);
 
   for (let i = 0; i < w * h; i++) {
-    if (pixels[i * 4 + 3] < 128) { height[i] = 0; continue; }
+    if (pixels[i * 4 + 3] < 128) { height[i] = 0.5; continue; }
     const key = (pixels[i * 4] << 16) | (pixels[i * 4 + 1] << 8) | pixels[i * 4 + 2];
     let v = Math.pow(rank.get(key) || 0, gamma);
     if (levels > 1) v = Math.round(v * (levels - 1)) / (levels - 1);
@@ -984,6 +996,12 @@ function patchHeightMaterial(material, allowHeightRelief = false) {
     shader.uniforms.uReflectionStrength = {
       value: reflectionsEnabled ? (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) : 0,
     };
+    shader.uniforms.uCelestialMap = { value: celestialTexture };
+    shader.uniforms.uCelestialStrength = {
+      value: reflectionsEnabled
+        ? Math.min(1.0, (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) * 2.0)
+        : 0,
+    };
 
     shader.vertexShader = shader.vertexShader.replace(
       '#include <common>',
@@ -1021,6 +1039,8 @@ uniform float uHeightLift;
 uniform float uHeightNormalStrength;
 uniform float uReflectionMode;
 uniform float uReflectionStrength;
+uniform samplerCube uCelestialMap;
+uniform float uCelestialStrength;
 varying vec2 vFaceScale;
 varying vec2 vHeightLightTS;
 varying vec3 vReflectWorldPos;
@@ -1117,9 +1137,12 @@ if (uHeightEnabled > 0.5) {
     vec3 worldNormal = normalize( ( vec4( surfaceNormal, 0.0 ) * viewMatrix ).xyz );
     vec3 cameraToFrag = normalize( vReflectWorldPos - cameraPosition );
     vec3 reflectionDir = reflect( cameraToFrag, worldNormal );
-    vec4 reflectionColor = textureCube( envMap, vec3( flipEnvMap * reflectionDir.x, reflectionDir.yz ) );
+    vec3 cubeUv = vec3( flipEnvMap * reflectionDir.x, reflectionDir.yz );
+    vec4 reflectionColor = textureCube( envMap, cubeUv );
     float reflectionAmount = clamp( specularStrength * uReflectionStrength, 0.0, 1.0 );
     outgoingLight = mix( outgoingLight, reflectionColor.rgb, reflectionAmount );
+    vec3 celestialColor = textureCube( uCelestialMap, cubeUv ).rgb;
+    outgoingLight += celestialColor * specularStrength * uCelestialStrength;
   }
 #endif`
     );
@@ -1197,7 +1220,9 @@ function setReflectionMode(mode, persist = true) {
   }
   if (reflectionsEnabled && !wasEnabled) {
     reflectionDirty = true;
+    celestialDirty = true;
     reflectionTimer = REFLECTION_INTERVAL;
+    celestialTimer = CELESTIAL_INTERVAL;
   }
 
   const modeValue = reflectionModeValue();
@@ -1208,6 +1233,10 @@ function setReflectionMode(mode, persist = true) {
     if (u) {
       u.uReflectionMode.value = modeValue;
       u.uReflectionStrength.value = reflectionsEnabled ? material.userData.reflectionStrength : 0;
+      u.uCelestialMap.value = celestialTexture;
+      u.uCelestialStrength.value = reflectionsEnabled
+        ? Math.min(1.0, (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) * 2.0)
+        : 0;
     }
   }
   updateReflectionButton();
@@ -2565,7 +2594,7 @@ function enterImmersiveCapture() {
 
   if (!navigator.keyboard || typeof navigator.keyboard.lock !== 'function') return;
   Promise.resolve(fullscreenRequest)
-    .then(() => navigator.keyboard.lock(['KeyW', 'ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight']))
+    .then(() => navigator.keyboard.lock(['KeyW', 'KeyD', 'ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight']))
     .then(() => { keyboardLockActive = true; })
     .catch(() => { keyboardLockActive = false; });
 }
@@ -2696,7 +2725,7 @@ window.addEventListener('keydown', (e) => {
 
   // With Keyboard Lock active this arrives after the shortcut was captured;
   // preventDefault is the last line of defence in browsers that deliver it.
-  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyW') e.preventDefault();
+  if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyW' || e.code === 'KeyD')) e.preventDefault();
 
   switch (e.code) {
     case 'KeyW':
@@ -2800,8 +2829,14 @@ document.getElementById('cameraBtn').addEventListener('click', () => {
 function captureReflections() {
   const gridWasVisible = gridHelper.visible;
   const worldWasVisible = worldGroup.visible;
+  const starWasVisible = starContainer ? starContainer.visible : false;
+  const sunWasVisible = sunMesh ? sunMesh.visible : false;
+  const moonWasVisible = moonMesh ? moonMesh.visible : false;
   gridHelper.visible = false;
   worldGroup.visible = false;
+  if (starContainer) starContainer.visible = false;
+  if (sunMesh) sunMesh.visible = false;
+  if (moonMesh) moonMesh.visible = false;
 
   reflectionCamera.renderTarget = reflectionWriteTarget;
   reflectionCamera.position.copy(camera.position);
@@ -2810,6 +2845,9 @@ function captureReflections() {
 
   gridHelper.visible = gridWasVisible;
   worldGroup.visible = worldWasVisible;
+  if (starContainer) starContainer.visible = starWasVisible;
+  if (sunMesh) sunMesh.visible = sunWasVisible;
+  if (moonMesh) moonMesh.visible = moonWasVisible;
 
   reflectionTexture = reflectionWriteTarget.texture;
   reflectionWriteTarget = reflectionWriteTarget === reflectionTargetA ? reflectionTargetB : reflectionTargetA;
@@ -2818,13 +2856,57 @@ function captureReflections() {
   }
 }
 
+function captureCelestialReflections() {
+  const gridWasVisible = gridHelper.visible;
+  const worldWasVisible = worldGroup.visible;
+  const starWasVisible = starContainer ? starContainer.visible : false;
+  const skyWasVisible = skyMesh ? skyMesh.visible : false;
+  const background = scene.background;
+  const clearColor = renderer.getClearColor(new THREE.Color());
+  const clearAlpha = renderer.getClearAlpha();
+
+  gridHelper.visible = false;
+  worldGroup.visible = false;
+  if (starContainer) starContainer.visible = false;
+  if (skyMesh) skyMesh.visible = false;
+  scene.background = null;
+  renderer.setClearColor(0x000000, 1);
+
+  celestialCamera.renderTarget = celestialWriteTarget;
+  celestialCamera.position.copy(camera.position);
+  celestialCamera.updateMatrixWorld(true);
+  celestialCamera.update(renderer, scene);
+
+  gridHelper.visible = gridWasVisible;
+  worldGroup.visible = worldWasVisible;
+  if (starContainer) starContainer.visible = starWasVisible;
+  if (skyMesh) skyMesh.visible = skyWasVisible;
+  scene.background = background;
+  renderer.setClearColor(clearColor, clearAlpha);
+
+  celestialTexture = celestialWriteTarget.texture;
+  celestialWriteTarget = celestialWriteTarget === celestialTargetA ? celestialTargetB : celestialTargetA;
+  for (const material of blockMaterialCache.values()) {
+    if (!material.userData.reflective) continue;
+    const u = material.userData.heightUniforms;
+    if (u) u.uCelestialMap.value = celestialTexture;
+  }
+}
+
 function updateReflections(delta) {
   if (!reflectionsEnabled) return;
   reflectionTimer += delta;
-  if (!reflectionDirty && reflectionTimer < REFLECTION_INTERVAL) return;
-  reflectionTimer = 0;
-  reflectionDirty = false;
-  captureReflections();
+  if (reflectionDirty || reflectionTimer >= REFLECTION_INTERVAL) {
+    reflectionTimer = 0;
+    reflectionDirty = false;
+    captureReflections();
+  }
+  celestialTimer += delta;
+  if (celestialDirty || celestialTimer >= CELESTIAL_INTERVAL) {
+    celestialTimer = 0;
+    celestialDirty = false;
+    captureCelestialReflections();
+  }
 }
 
 /* ============================= ANIMATION ============================= */

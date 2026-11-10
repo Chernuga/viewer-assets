@@ -122,13 +122,17 @@ selected by the `uReflectionMode` uniform; switching modes does not rebuild the
 world or recapture the probe. Animated textures use a full-strip alpha mask whose
 V offset is kept in sync with the albedo frame.
 
-A 128px `CubeCamera` probe renders every 0.35 s while reflections are on. **Blocks
-are excluded from the probe**: `worldGroup` and the debug grid are hidden during
-capture, so only the sky, sun, moon and stars are reflected. Two cube targets
-ping-pong: the sky is captured into one while materials still sample the other,
-avoiding a WebGL feedback loop. Turning reflections off sets
-`uReflectionStrength` to zero and stops the captures, so there is no world
-rebuild. The feature is off by default because
+A 128px `CubeCamera` probe renders the sky every 0.35 s while reflections are on.
+**Blocks, stars and the sun/moon are excluded from the sky probe**:
+`worldGroup`, `starContainer`, `sunMesh` and `moonMesh` are hidden during
+capture, so only the sky gradient is reflected. The sun and moon are captured by
+a second cube probe every 0.1 s against a black background, and the two maps are
+added in the material shader, so the celestial bodies move without forcing a sky
+update. Stars are never reflected. Two cube targets per probe ping-pong: the
+scene is captured into one while materials still sample the other, avoiding a
+WebGL feedback loop. Turning reflections off sets `uReflectionStrength` to zero
+and stops both captures, so there is no world rebuild. The feature is off by
+default because
 each capture is six extra scene renders; the config defaults are
 `render.reflections` and `render.reflectionType`.
 
@@ -146,8 +150,8 @@ The FOV slider applies live to both cameras and is stored in `localStorage`
 
 The viewer opens in creative first-person mode by default (the last mode is
 remembered in `localStorage`). Click the canvas to play — that enters
-fullscreen, captures the mouse and locks Ctrl+W for sprinting; Esc releases
-everything. Use **Camera: Orbit** to go back to the orbit view.
+fullscreen, captures the mouse and locks Ctrl+W/Ctrl+D; Esc releases everything.
+Use **Camera: Orbit** to go back to the orbit view.
 
 | Input | Action |
 | --- | --- |
@@ -160,12 +164,13 @@ everything. Use **Camera: Orbit** to go back to the orbit view.
 | `R` | respawn at the centre above the build |
 | `Esc` | release the mouse and browser shortcuts |
 
-Ctrl+W is a browser-reserved shortcut. Capturing it uses the Keyboard Lock API,
-which Chrome only enables in fullscreen, so clicking the canvas enters
-fullscreen, captures the mouse, and locks `W`/Ctrl. If the browser denies that,
-Ctrl falls back to double-tap `W` sprinting. Releasing the mouse (Esc) releases
-the keyboard lock too. Movement is simulated at 20 ticks/second with render
-interpolation, using the Java Edition constants:
+Ctrl+W is a browser-reserved shortcut. Capturing it (and Ctrl+D, which would
+open bookmarks) uses the Keyboard Lock API, which Chrome only enables in
+fullscreen, so clicking the canvas enters fullscreen, captures the mouse, and
+locks `W`/`D`/Ctrl. If the browser denies that, Ctrl falls back to double-tap
+`W` sprinting. Releasing the mouse (Esc) releases the keyboard lock too.
+Movement is simulated at 20 ticks/second with render interpolation, using the
+Java Edition constants:
 
 | Mode | Acceleration | Drag | Terminal speed |
 | --- | --- | --- | --- |
