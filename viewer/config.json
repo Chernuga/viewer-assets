@@ -43,7 +43,7 @@
     "blinkAmount": 0.4
   },
   "animation": {
-    "shaderSpeed": 0.0001
+    "shaderSpeed": 0.00005
   },
   "render": {
     "concurrency": 120,
