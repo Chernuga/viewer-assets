@@ -1,0 +1,242 @@
+/fill -30 -2 -30 30 -1 30 dirt
+/fill -30 0 -30 30 0 30 grass_block
+/fill -28 0 -1 28 0 1 dirt_path
+/fill -1 0 -28 1 0 28 dirt_path
+/fill -5 0 -5 5 0 5 gravel
+/fill -6 0 -6 6 0 -6 coarse_dirt
+/fill -6 0 6 6 0 6 coarse_dirt
+/fill -6 0 -6 -6 0 6 coarse_dirt
+/fill 6 0 -6 6 0 6 coarse_dirt
+/fill -21 0 -17 -13 0 -11 oak_planks
+/fill -21 1 -17 -13 4 -11 oak_planks
+/fill -21 1 -17 -13 1 -17 cobblestone
+/fill -21 1 -11 -13 1 -11 cobblestone
+/fill -21 1 -17 -21 1 -11 cobblestone
+/fill -13 1 -17 -13 1 -11 cobblestone
+/fill -21 1 -17 -21 4 -17 oak_log
+/fill -21 1 -11 -21 4 -11 oak_log
+/fill -13 1 -17 -13 4 -17 oak_log
+/fill -13 1 -11 -13 4 -11 oak_log
+/setblock -21 2 -14 glass
+/setblock -13 2 -14 glass
+/setblock -17 2 -17 glass
+/fill -17 1 -11 -17 2 -11 air
+/setblock -17 1 -11 oak_door[facing=south,half=lower]
+/setblock -17 2 -11 oak_door[facing=south,half=upper]
+/fill -22 4 -18 -12 4 -10 oak_planks
+/fill -20 5 -16 -14 5 -12 oak_planks
+/fill -18 6 -15 -16 6 -13 oak_slab
+/fill -20 5 -16 -20 7 -16 cobblestone
+/setblock -17 3 -14 lantern
+/setblock -18 1 -10 dandelion
+/setblock -16 1 -10 poppy
+/fill 10 0 -17 18 0 -11 oak_planks
+/fill 10 1 -17 18 4 -11 oak_planks
+/fill 10 1 -17 18 1 -17 cobblestone
+/fill 10 1 -11 18 1 -11 cobblestone
+/fill 10 1 -17 10 1 -11 cobblestone
+/fill 18 1 -17 18 1 -11 cobblestone
+/fill 10 1 -17 10 4 -17 oak_log
+/fill 10 1 -11 10 4 -11 oak_log
+/fill 18 1 -17 18 4 -17 oak_log
+/fill 18 1 -11 18 4 -11 oak_log
+/setblock 10 2 -14 glass
+/setblock 18 2 -14 glass
+/setblock 14 2 -17 glass
+/fill 14 1 -11 14 2 -11 air
+/setblock 14 1 -11 oak_door[facing=south,half=lower]
+/setblock 14 2 -11 oak_door[facing=south,half=upper]
+/fill 9 4 -18 19 4 -10 oak_planks
+/fill 11 5 -16 17 5 -12 oak_planks
+/fill 13 6 -15 15 6 -13 oak_slab
+/fill 11 5 -16 11 7 -16 cobblestone
+/setblock 14 3 -14 lantern
+/setblock 13 1 -10 dandelion
+/setblock 15 1 -10 poppy
+/fill -20 0 9 -12 0 15 oak_planks
+/fill -20 1 9 -12 4 15 oak_planks
+/fill -20 1 9 -12 1 9 cobblestone
+/fill -20 1 15 -12 1 15 cobblestone
+/fill -20 1 9 -20 1 15 cobblestone
+/fill -12 1 9 -12 1 15 cobblestone
+/fill -20 1 9 -20 4 9 oak_log
+/fill -20 1 15 -20 4 15 oak_log
+/fill -12 1 9 -12 4 9 oak_log
+/fill -12 1 15 -12 4 15 oak_log
+/setblock -20 2 12 glass
+/setblock -12 2 12 glass
+/setblock -16 2 15 glass
+/fill -16 1 9 -16 2 9 air
+/setblock -16 1 9 oak_door[facing=north,half=lower]
+/setblock -16 2 9 oak_door[facing=north,half=upper]
+/fill -21 4 8 -11 4 16 oak_planks
+/fill -19 5 10 -13 5 14 oak_planks
+/fill -17 6 11 -15 6 13 oak_slab
+/fill -19 5 10 -19 7 10 cobblestone
+/setblock -16 3 12 lantern
+/setblock -15 1 8 dandelion
+/setblock -13 1 8 poppy
+/fill 10 0 9 17 0 15 oak_planks
+/fill 10 1 9 17 4 15 oak_planks
+/fill 10 1 9 17 1 9 cobblestone
+/fill 10 1 15 17 1 15 cobblestone
+/fill 10 1 9 10 1 15 cobblestone
+/fill 17 1 9 17 1 15 cobblestone
+/fill 10 1 9 10 4 9 oak_log
+/fill 10 1 15 10 4 15 oak_log
+/fill 17 1 9 17 4 9 oak_log
+/fill 17 1 15 17 4 15 oak_log
+/setblock 10 2 12 glass
+/setblock 17 2 12 glass
+/setblock 14 2 15 glass
+/fill 14 1 9 14 2 9 air
+/setblock 14 1 9 oak_door[facing=north,half=lower]
+/setblock 14 2 9 oak_door[facing=north,half=upper]
+/fill 9 4 8 18 4 16 oak_planks
+/fill 11 5 10 16 5 14 oak_planks
+/fill 13 6 11 14 6 13 oak_slab
+/fill 11 5 10 11 7 10 cobblestone
+/setblock 14 3 12 lantern
+/setblock 15 1 8 dandelion
+/setblock 17 1 8 poppy
+/fill -18 0 -10 -16 0 -1 dirt_path
+/fill 13 0 -10 15 0 -1 dirt_path
+/fill -17 0 1 -15 0 8 dirt_path
+/fill 12 0 1 14 0 8 dirt_path
+/fill 6 1 4 8 1 6 cobblestone
+/fill 6 1 4 8 1 6 cobblestone
+/setblock 7 1 5 air
+/setblock 7 0 5 blue_ice
+/fill 6 2 4 6 3 4 oak_fence
+/fill 6 2 6 6 3 6 oak_fence
+/fill 8 2 4 8 3 4 oak_fence
+/fill 8 2 6 8 3 6 oak_fence
+/fill 6 4 4 8 4 6 oak_slab
+/setblock -5 1 4 stone_bricks
+/setblock -5 2 4 bell[facing=south]
+/fill -11 1 2 -11 2 2 oak_log
+/fill -11 1 4 -11 2 4 oak_log
+/fill -9 1 2 -9 2 2 oak_log
+/fill -9 1 4 -9 2 4 oak_log
+/fill -11 3 2 -9 3 4 white_wool
+/setblock -10 1 3 barrel
+/setblock -9 1 3 hay_block
+/setblock -11 1 3 composter
+/fill -20 0 17 -8 0 24 farmland
+/fill -19 0 20 -9 0 20 blue_ice
+/fill -19 1 18 -9 1 18 wheat[age=7]
+/fill -19 1 19 -9 1 19 wheat[age=7]
+/fill -19 1 21 -9 1 21 wheat[age=7]
+/fill -19 1 22 -9 1 22 wheat[age=7]
+/fill -20 1 17 -8 1 17 oak_fence
+/fill -20 1 24 -8 1 24 oak_fence
+/fill -20 1 17 -20 1 24 oak_fence
+/fill -8 1 17 -8 1 24 oak_fence
+/fill -8 1 19 -8 1 19 air
+/fill -8 1 20 -8 1 20 oak_fence_gate[facing=east]
+/fill -8 1 21 -8 1 21 air
+/fill -7 0 20 -1 0 20 dirt_path
+/setblock -27 1 -26 oak_log
+/setblock -27 2 -26 oak_log
+/setblock -27 3 -26 oak_log
+/setblock -27 4 -26 oak_log
+/fill -29 4 -28 -25 4 -24 oak_leaves
+/fill -28 5 -27 -26 5 -25 oak_leaves
+/setblock -27 6 -26 oak_leaves
+/setblock 27 1 -26 oak_log
+/setblock 27 2 -26 oak_log
+/setblock 27 3 -26 oak_log
+/setblock 27 4 -26 oak_log
+/fill 25 4 -28 29 4 -24 oak_leaves
+/fill 26 5 -27 28 5 -25 oak_leaves
+/setblock 27 6 -26 oak_leaves
+/setblock -27 1 26 oak_log
+/setblock -27 2 26 oak_log
+/setblock -27 3 26 oak_log
+/setblock -27 4 26 oak_log
+/fill -29 4 24 -25 4 28 oak_leaves
+/fill -28 5 25 -26 5 27 oak_leaves
+/setblock -27 6 26 oak_leaves
+/setblock 27 1 26 oak_log
+/setblock 27 2 26 oak_log
+/setblock 27 3 26 oak_log
+/setblock 27 4 26 oak_log
+/fill 25 4 24 29 4 28 oak_leaves
+/fill 26 5 25 28 5 27 oak_leaves
+/setblock 27 6 26 oak_leaves
+/setblock -27 1 13 oak_log
+/setblock -27 2 13 oak_log
+/setblock -27 3 13 oak_log
+/setblock -27 4 13 oak_log
+/fill -29 4 11 -25 4 15 oak_leaves
+/fill -28 5 12 -26 5 14 oak_leaves
+/setblock -27 6 13 oak_leaves
+/setblock 27 1 13 oak_log
+/setblock 27 2 13 oak_log
+/setblock 27 3 13 oak_log
+/setblock 27 4 13 oak_log
+/fill 25 4 11 29 4 15 oak_leaves
+/fill 26 5 12 28 5 14 oak_leaves
+/setblock 27 6 13 oak_leaves
+/setblock -26 1 -6 oak_log
+/setblock -26 2 -6 oak_log
+/setblock -26 3 -6 oak_log
+/setblock -26 4 -6 oak_log
+/fill -28 4 -8 -24 4 -4 oak_leaves
+/fill -27 5 -7 -25 5 -5 oak_leaves
+/setblock -26 6 -6 oak_leaves
+/setblock 26 1 -6 oak_log
+/setblock 26 2 -6 oak_log
+/setblock 26 3 -6 oak_log
+/setblock 26 4 -6 oak_log
+/fill 24 4 -8 28 4 -4 oak_leaves
+/fill 25 5 -7 27 5 -5 oak_leaves
+/setblock 26 6 -6 oak_leaves
+/setblock -24 1 -3 oak_fence
+/setblock -24 2 -3 oak_fence
+/setblock -24 3 -3 lantern
+/setblock -12 1 -3 oak_fence
+/setblock -12 2 -3 oak_fence
+/setblock -12 3 -3 lantern
+/setblock 6 1 -3 oak_fence
+/setblock 6 2 -3 oak_fence
+/setblock 6 3 -3 lantern
+/setblock 24 1 -3 oak_fence
+/setblock 24 2 -3 oak_fence
+/setblock 24 3 -3 lantern
+/setblock -3 1 -24 oak_fence
+/setblock -3 2 -24 oak_fence
+/setblock -3 3 -24 lantern
+/setblock 3 1 24 oak_fence
+/setblock 3 2 24 oak_fence
+/setblock 3 3 24 lantern
+/setblock -3 1 14 oak_fence
+/setblock -3 2 14 oak_fence
+/setblock -3 3 14 lantern
+/setblock 3 1 14 oak_fence
+/setblock 3 2 14 oak_fence
+/setblock 3 3 14 lantern
+/setblock -4 1 4 oak_stairs[facing=east]
+/setblock -4 1 5 oak_stairs[facing=east]
+/setblock 4 1 -4 oak_stairs[facing=west]
+/setblock 4 1 -5 oak_stairs[facing=west]
+/setblock -25 1 -18 poppy
+/setblock -24 1 -18 dandelion
+/setblock -25 1 -20 short_grass
+/setblock 24 1 -20 poppy
+/setblock 25 1 -20 dandelion
+/setblock 24 1 -18 short_grass
+/setblock -24 1 18 dandelion
+/setblock -23 1 18 poppy
+/setblock -25 1 20 short_grass
+/setblock 23 1 18 poppy
+/setblock 24 1 18 dandelion
+/setblock 25 1 20 short_grass
+/setblock -4 1 -9 short_grass
+/setblock 4 1 -9 short_grass
+/setblock -4 1 10 poppy
+/setblock 4 1 10 dandelion
+/setblock -7 1 16 hay_block
+/setblock -7 2 16 hay_block
+/setblock -6 1 16 hay_block
+/fill -6 1 15 -5 2 15 oak_log
