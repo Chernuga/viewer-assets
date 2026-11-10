@@ -3,9 +3,9 @@
 Procedural heightmaps are generated from each block texture at runtime; no
 ready-made PBR/heightmap assets and no normal-map textures are used.
 
-**Toggle:** the `Heightmaps: On/Off` button (or `H`) switches the heightmap
-shading live. The choice is stored in `localStorage`; the default comes from
-`viewer/config.json` -> `render.heightMap`.
+**Toggle:** in the **Settings** menu, the `Heightmaps: On/Off` button (or `H`)
+switches the heightmap shading live. The choice is stored in `localStorage`; the
+default comes from `viewer/config.json` -> `render.heightMap`.
 
 **Algorithm** (`index.html`, "PROCEDURAL HEIGHT MAPS"):
 
@@ -103,6 +103,16 @@ above). Translucent blocks and flat cutout models skip the bevel but keep
 height-derived normals; the toggle removes the whole heightmap shading pass.
 Running the heightmap pipeline needs nothing beyond the existing albedo files.
 
+## Settings menu
+
+Only **Build** stays in the header. The **Settings** button below it opens a
+dropdown containing the field-of-view slider (30-110°), the heightmap toggle,
+the Creative/Orbit camera switch, and Refresh SHA. Clicking outside the menu or
+pressing Esc closes it.
+
+The FOV slider applies live to both cameras and is stored in `localStorage`
+(`voxelBuilderFov`), overriding `player.fov` from the config on later loads.
+
 ## Creative movement
 
 The viewer opens in creative first-person mode by default (the last mode is
@@ -154,7 +164,8 @@ Config (`viewer/config.json` -> `player`):
 ```
 
 `mouseSensitivity` uses the same 0-1 scale as Minecraft (0.5 = default);
-`startFlying` controls whether `R`/entry starts airborne.
+`startFlying` controls whether `R`/entry starts airborne. `fov` is the initial
+field of view; the Settings slider overrides it and is remembered separately.
 
 ## Sun and moon
 

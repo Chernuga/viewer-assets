@@ -10,12 +10,21 @@
     .app { height:100%; display:flex; flex-direction:column; touch-action:none; }
     .top { padding:10px; display:flex; gap:8px; align-items:flex-start; background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent); z-index: 10; }
     textarea.cmd { flex:1; min-height:48px; max-height:96px; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.04); background:var(--panel); color:#eaffea; font-family:var(--mono); font-size:14px; resize:none; box-shadow: 0 6px 30px rgba(0,0,0,0.35); }
-    .controls { display:flex; flex-direction:column; gap:8px; }
+    .controls { display:flex; flex-direction:column; gap:8px; position:relative; }
     .btn { border-radius:10px; padding:10px 12px; background:rgba(255,255,255,0.03); color:var(--accent); border:1px solid rgba(57, 255, 20, 0.2); font-weight:700; cursor: pointer; text-transform: uppercase; font-size: 11px; }
     .btn.secondary { color: #ff9999; border-color: rgba(255,100,100,0.3); }
     .btn.toggle { color: #9fb7ff; border-color: rgba(110, 150, 255, 0.3); }
     .btn.toggle.on { color: #b8ffb0; border-color: rgba(57, 255, 20, 0.45); background: rgba(57, 255, 20, 0.10); }
     .btn.toggle.off { color: rgba(255,255,255,0.45); border-color: rgba(255,255,255,0.12); }
+    #settingsBtn.open { color:#b8ffb0; border-color:rgba(57,255,20,0.45); background:rgba(57,255,20,0.10); }
+    .settings-panel { position:absolute; top:calc(100% + 8px); right:0; width:236px; display:none; flex-direction:column; gap:8px; padding:10px; border-radius:12px; background:rgba(8,18,22,0.97); border:1px solid rgba(57,255,20,0.18); box-shadow:0 18px 50px rgba(0,0,0,0.55); backdrop-filter:blur(10px); z-index:30; }
+    .settings-panel.open { display:flex; }
+    .settings-panel .btn { width:100%; }
+    .setting { display:flex; flex-direction:column; gap:7px; padding:8px; border-radius:8px; background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.05); }
+    .setting-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .setting-head label { font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); }
+    #fovValue { color:var(--accent); font-family:var(--mono); font-size:11px; }
+    #fovSlider { width:100%; accent-color:#39ff14; cursor:pointer; }
     .viewer { flex:1; position:relative; }
     #webgl-canvas { display:block; width:100%; height:100%; }
     .hud { position:absolute; left:12px; bottom:12px; padding:8px 10px; border-radius:10px; background:var(--glass); font-size:12px; backdrop-filter: blur(6px); pointer-events:none; white-space:pre-line; line-height:1.5; }
@@ -34,9 +43,19 @@
     <textarea id="commands" class="cmd" placeholder="/setblock 0 0 0 end_portal&#10;/setblock 1 0 0 stone&#10;/fill 2 0 0 4 2 2 stone"></textarea>
     <div class="controls">
       <button id="renderBtn" class="btn">Build</button>
-      <button id="heightmapBtn" class="btn toggle on" aria-pressed="true">Heightmaps: On</button>
-      <button id="cameraBtn" class="btn toggle on" aria-pressed="true" title="Switch between the creative first-person camera and the orbit camera">Camera: Creative</button>
-      <button id="refreshShaBtn" class="btn secondary">Refresh SHA</button>
+      <button id="settingsBtn" class="btn" aria-expanded="false" aria-controls="settingsPanel">Settings</button>
+      <div id="settingsPanel" class="settings-panel" aria-hidden="true">
+        <div class="setting">
+          <div class="setting-head">
+            <label for="fovSlider">Field of view</label>
+            <span id="fovValue">70°</span>
+          </div>
+          <input id="fovSlider" type="range" min="30" max="110" step="1" value="70" />
+        </div>
+        <button id="heightmapBtn" class="btn toggle on" aria-pressed="true">Heightmaps: On</button>
+        <button id="cameraBtn" class="btn toggle on" aria-pressed="true" title="Switch between the creative first-person camera and the orbit camera">Camera: Creative</button>
+        <button id="refreshShaBtn" class="btn secondary">Refresh SHA</button>
+      </div>
     </div>
   </div>
   <div class="viewer">
@@ -1933,6 +1952,7 @@ const JUMP_COOLDOWN_TICKS = 10;
 const DOUBLE_TAP_TICKS = 7;
 const COLLISION_EPS = 1e-7;
 const PLAYER_MODE_KEY = 'voxelBuilderViewMode';
+const FOV_STORAGE_KEY = 'voxelBuilderFov';
 
 const player = {
   pos: new THREE.Vector3(camera.position.x, camera.position.y - EYE_HEIGHT, camera.position.z),
@@ -2384,9 +2404,32 @@ function updateHud() {
     `Double-Space toggle flight • double-W sprint • R respawn • Esc release mouse`;
 }
 
+function updateFovUi(fov) {
+  const slider = document.getElementById('fovSlider');
+  if (slider && Number(slider.value) !== fov) slider.value = String(fov);
+  const value = document.getElementById('fovValue');
+  if (value) value.textContent = fov + '°';
+}
+
+function setBaseFov(value, persist = true) {
+  const fov = Math.max(30, Math.min(110, Math.round(Number(value) || 70)));
+  if (!CONFIG.player) CONFIG.player = {};
+  CONFIG.player.fov = fov;
+  updateFovUi(fov);
+  if (persist) localStorage.setItem(FOV_STORAGE_KEY, String(fov));
+  if (cameraMode !== 'creative') {
+    player.fov = fov;
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }
+}
+
 function initPlayerController() {
   const cfg = CONFIG.player || {};
-  player.fov = cfg.fov ?? 70;
+  const savedFov = parseFloat(localStorage.getItem(FOV_STORAGE_KEY));
+  const fov = Number.isFinite(savedFov) ? savedFov : (cfg.fov ?? 70);
+  player.fov = fov;
+  setBaseFov(fov, false);
   camera.fov = player.fov;
   camera.updateProjectionMatrix();
 
@@ -2461,7 +2504,37 @@ canvas.addEventListener('click', () => {
   if (cameraMode === 'creative') requestPointerLock();
 });
 
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsPanel = document.getElementById('settingsPanel');
+
+function setSettingsOpen(open) {
+  settingsPanel.classList.toggle('open', open);
+  settingsPanel.setAttribute('aria-hidden', String(!open));
+  settingsBtn.setAttribute('aria-expanded', String(open));
+  settingsBtn.classList.toggle('open', open);
+}
+
+settingsBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  setSettingsOpen(!settingsPanel.classList.contains('open'));
+});
+
+document.addEventListener('click', (e) => {
+  if (!settingsPanel.classList.contains('open')) return;
+  if (settingsPanel.contains(e.target) || settingsBtn.contains(e.target)) return;
+  setSettingsOpen(false);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' && !pointerLocked) setSettingsOpen(false);
+});
+
+document.getElementById('fovSlider').addEventListener('input', (e) => {
+  setBaseFov(e.target.value, true);
+});
+
 document.getElementById('cameraBtn').addEventListener('click', () => {
+  setSettingsOpen(false);
   if (cameraMode === 'creative') setCameraMode('orbit');
   else setCameraMode('creative');
 });
@@ -2641,9 +2714,9 @@ async function forceRefreshSha() {
   await build();
 }
 
-document.getElementById('renderBtn').addEventListener('click', () => { saveCommandsToStorage(); build(); });
+document.getElementById('renderBtn').addEventListener('click', () => { setSettingsOpen(false); saveCommandsToStorage(); build(); });
 document.getElementById('heightmapBtn').addEventListener('click', () => { setHeightMapsEnabled(!heightMapsEnabled); });
-document.getElementById('refreshShaBtn').addEventListener('click', () => { forceRefreshSha(); });
+document.getElementById('refreshShaBtn').addEventListener('click', () => { setSettingsOpen(false); forceRefreshSha(); });
 window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 
 (async () => {
