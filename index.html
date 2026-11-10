@@ -65,9 +65,9 @@
         <div class="setting">
           <div class="setting-head">
             <label for="heightResSlider">Heightmap resolution</label>
-            <span id="heightResValue">4×</span>
+            <span id="heightResValue">256 px</span>
           </div>
-          <input id="heightResSlider" type="range" min="0" max="3" step="1" value="2" />
+          <input id="heightResSlider" type="range" min="0" max="2" step="1" value="1" />
         </div>
         <button id="cameraBtn" class="btn toggle on" aria-pressed="true" title="Switch between the creative first-person camera and the orbit camera">Camera: Creative</button>
         <button id="refreshShaBtn" class="btn secondary">Refresh SHA</button>
@@ -336,8 +336,8 @@ let worldBounds = null;
 const textureCache = new Map();
 const HEIGHTMAP_STORAGE_KEY = 'voxelBuilderHeightMapsEnabled';
 const HEIGHT_RES_STORAGE_KEY = 'voxelBuilderHeightMapResolution';
-const HEIGHT_RES_OPTIONS = [64, 128, 256, 512];
-const HEIGHT_RES_LABELS = ['1×', '2×', '4×', '8×'];
+const HEIGHT_RES_OPTIONS = [16, 256, 512];
+const HEIGHT_RES_LABELS = ['16 px', '256 px', '512 px'];
 let heightMapsEnabled = true;
 let heightResRebuildTimer = 0;
 const heightSunDir = { value: new THREE.Vector3(0, 1, 0) };
@@ -984,7 +984,7 @@ function applySurfaceMapsToMaterial(material, maps, allowHeightRelief) {
   data.heightFrames = maps.frameCount || 1;
   data.heightMapWidth = maps.width;
   data.heightMapHeight = maps.height;
-  data.heightSampleStep = Math.max(1, maps.frameSize / 192);
+  data.heightSampleStep = 1;
   data.heightAtlasCols = maps.atlasCols || 1;
   data.heightAtlasRows = maps.atlasRows || 1;
   data.heightRelief = allowHeightRelief;
@@ -1032,7 +1032,7 @@ function patchHeightMaterial(material, allowHeightRelief = false) {
         1 / (data.heightMapWidth || 256),
         1 / (data.heightMapHeight || 256)),
     };
-    shader.uniforms.uHeightSampleStep = { value: data.heightSampleStep || 1 };
+    shader.uniforms.uHeightSampleStep = { value: 1 };
     shader.uniforms.uHeightFrames = { value: data.heightFrames || 1 };
     shader.uniforms.uHeightAtlasCols = { value: data.heightAtlasCols || 1 };
     shader.uniforms.uHeightAtlasRows = { value: data.heightAtlasRows || 1 };

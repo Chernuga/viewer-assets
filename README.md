@@ -89,10 +89,10 @@ Config knobs (`viewer/config.json`):
 }
 ```
 
-`heightMapResolution` is the per-frame heightmap size: **1× = 64px, 2× =
-128px, 4× = 256px (default), 8× = 512px**. Animated textures pack one
-independent height field per frame into a row-major atlas at the same size, and
-the shader samples the atlas cell for the current frame. `heightMapLevels`
+`heightMapResolution` is the per-frame heightmap size: **16, 256 (default), or
+512 px**. Animated textures pack one independent height field per frame into a
+row-major atlas at the same size, and the shader samples the atlas cell for the
+current frame. Higher resolutions use more GPU memory and take longer to build. `heightMapLevels`
 quantizes the height field (0 = off), `heightMapSeamless`
 matches opposite texture edges for seamless tiling, `heightMapEdge` /
 `heightMapEdgeThreshold` control the outlined bevel, `heightMapLift` adds a
@@ -101,9 +101,10 @@ cavity-darkening strength, and `heightMapNormalStrength` scales the
 height-derived normal relief.
 
 Every block surface gets the heightmap, including translucent glass/ice and flat
-cutout plants. Static textures use `heightMapResolution` (256); animated textures pack one independent height field
-per frame into a row-major atlas at the same 256px per frame, and the shader
-samples the atlas cell for the current frame.
+cutout plants. Static textures use the selected `heightMapResolution`; animated
+textures pack one independent height field per frame into a row-major atlas at
+the same per-frame size, and the shader samples the atlas cell for the current
+frame.
 
 The toggle removes the whole heightmap shading pass. Running the heightmap
 pipeline needs nothing beyond the existing albedo files.
@@ -145,7 +146,7 @@ each capture is six extra scene renders; the config defaults are
 Only **Build** stays in the header. The **Settings** button below it opens a
 dropdown containing the field-of-view slider (30-110°), the reflection-strength
 slider (0-100%), the heightmap toggle, the heightmap-resolution slider
-(1×/2×/4×/8×), the reflections mode cycle (Off/Normal/Flat), the
+(16/256/512 px), the reflections mode cycle (Off/Normal/Flat), the
 Creative/Orbit camera switch, and Refresh SHA. Clicking outside the menu or
 pressing Esc closes it.
 
