@@ -75,7 +75,6 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { SSRPass } from 'three/addons/postprocessing/SSRPass.js';
 
 const errorOverlay = document.getElementById('errorOverlay');
 function showError(msg) { errorOverlay.style.display = 'block'; errorOverlay.textContent += msg + '\n'; }
@@ -116,6 +115,7 @@ const CONFIG_DEFAULTS = {
     concurrency: 12,
     heightMap: true,
     reflections: false,
+    reflectionType: 'normal',
     heightMapResolution: 512,
     heightMapLevels: 0,
     heightMapSeamless: true,
@@ -231,13 +231,70 @@ scene.add(worldGroup);
 
 /* ============================= REFLECTIONS ============================= */
 
-/* Screen-space reflections reconstruct the surface position from depth and
- * march the reflected ray through the visible scene, so every reflection is
- * evaluated from the reflecting surface rather than from a probe at the player. */
+/* A 128px cube probe rendered from the player's eye. Reflective block
+ * materials sample it with Three's built-in Lambert envMap path; the toggle
+ * only changes reflectivity and stops/starts the six-face captures. */
+const REFLECTION_TEXTURE_SIZE = 128;
+const REFLECTION_INTERVAL = 0.35;
+function createReflectionTarget() {
+  const target = new THREE.WebGLCubeRenderTarget(REFLECTION_TEXTURE_SIZE);
+  target.texture.generateMipmaps = false;
+  target.texture.minFilter = THREE.LinearFilter;
+  target.texture.magFilter = THREE.LinearFilter;
+  return target;
+}
+/* Two cube targets ping-pong: the scene is captured into one while materials
+ * still sample the other, which avoids a WebGL feedback loop now that every
+ * block material reflects. */
+const reflectionTargetA = createReflectionTarget();
+const reflectionTargetB = createReflectionTarget();
+const reflectionCamera = new THREE.CubeCamera(0.1, 3000, reflectionTargetA);
+scene.add(reflectionCamera);
+let reflectionTexture = reflectionTargetA.texture;
+let reflectionWriteTarget = reflectionTargetB;
 const REFLECTION_STORAGE_KEY = 'voxelBuilderReflectionsEnabled';
+const REFLECTION_MODE_KEY = 'voxelBuilderReflectionMode';
 const DEFAULT_REFLECTION_STRENGTH = 0.2;
+let reflectionMode = 'off';
 let reflectionsEnabled = false;
-let ssrPass = null;
+let reflectionTimer = 0;
+let reflectionDirty = true;
+
+/* A fully white 1x1 mask for translucent surfaces: the whole side reflects. */
+const fullReflectionMask = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat);
+fullReflectionMask.needsUpdate = true;
+fullReflectionMask.colorSpace = THREE.NoColorSpace;
+
+/* Per-pixel mask made from the albedo alpha channel. Transparent cutout pixels
+ * do not reflect; opaque pixels do. The map is built on the same canvas as the
+ * texture layout, including animated frame strips. */
+function createAlphaMaskTexture(image, frameCount) {
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = img.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3];
+    data[i] = alpha;
+    data[i + 1] = alpha;
+    data[i + 2] = alpha;
+    data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  if (frameCount > 1) tex.repeat.set(1, 1 / frameCount);
+  return tex;
+}
 
 /* Collision world rebuilt with the geometry: full cubes live in a Set, the
  * rarer partial shapes (slabs, stairs, fences, plants...) in a Map. */
@@ -693,6 +750,16 @@ function getTexture(texPath) {
       };
       if (!animatedTextures.includes(loadedTex)) animatedTextures.push(loadedTex);
     }
+
+    try {
+      const mask = createAlphaMaskTexture(image, frameCount);
+      loadedTex.userData = { ...(loadedTex.userData || {}), reflectionMask: mask };
+      for (const mat of blockMaterialCache.values()) {
+        if (mat.map === loadedTex && !mat.transparent) mat.specularMap = mask;
+      }
+    } catch (err) {
+      console.warn('Reflection mask failed for', url, err);
+    }
   }, undefined, (err) => { showError(`Texture missing: ${url}`); textureCache.set(url, magentaTex); });
   tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
   tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
@@ -863,14 +930,6 @@ function applySurfaceMapsToMaterial(material, maps, allowHeightRelief) {
     data.heightUniforms.uHeightFrames.value = maps.frameCount || 1;
     data.heightUniforms.uHeightEnabled.value = (heightMapsEnabled && allowHeightRelief) ? 1 : 0;
   }
-  if (data.normalMaterial) {
-    const u = data.normalMaterial.uniforms;
-    u.uHeightMap.value = maps.heightTexture;
-    u.uHeightMapTexel.value.set(1 / maps.width, 1 / maps.height);
-    u.uHeightSampleStep.value = Math.max(1, maps.width / 192);
-    u.uHeightFrames.value = maps.frameCount || 1;
-    u.uHeightEnabled.value = (heightMapsEnabled && allowHeightRelief) ? 1 : 0;
-  }
 }
 
 function attachSurfaceMaps(material, texPath, allowHeightRelief) {
@@ -906,6 +965,10 @@ function patchHeightMaterial(material, allowHeightRelief = false) {
     shader.uniforms.uHeightLift = { value: CONFIG.render.heightMapLift ?? 0.05 };
     shader.uniforms.uHeightNormalStrength = { value: (CONFIG.render.heightMapNormalStrength ?? 2.4) };
     shader.uniforms.uHeightSun = heightSunDir;
+    shader.uniforms.uReflectionMode = { value: reflectionMode === 'normal' ? 2 : (reflectionMode === 'flat' ? 1 : 0) };
+    shader.uniforms.uReflectionStrength = {
+      value: reflectionsEnabled ? (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) : 0,
+    };
 
     shader.vertexShader = shader.vertexShader.replace(
       '#include <common>',
@@ -915,7 +978,8 @@ attribute vec3 faceTangent;
 attribute vec3 faceBitangent;
 uniform vec3 uHeightSun;
 varying vec2 vFaceScale;
-varying vec2 vHeightLightTS;`
+varying vec2 vHeightLightTS;
+varying vec3 vReflectWorldPos;`
     );
     shader.vertexShader = shader.vertexShader.replace(
       '#include <begin_vertex>',
@@ -923,7 +987,8 @@ varying vec2 vHeightLightTS;`
 vec2 heightLight = vec2(dot(uHeightSun, faceTangent), dot(uHeightSun, faceBitangent));
 float heightLightLen = length(heightLight);
 vHeightLightTS = heightLightLen > 1e-4 ? heightLight / heightLightLen : vec2(0.0, 1.0);
-#include <begin_vertex>`
+#include <begin_vertex>
+vReflectWorldPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;`
     );
 
     shader.fragmentShader = shader.fragmentShader.replace(
@@ -939,10 +1004,14 @@ uniform float uHeightEdge;
 uniform float uHeightEdgeThreshold;
 uniform float uHeightLift;
 uniform float uHeightNormalStrength;
+uniform float uReflectionMode;
+uniform float uReflectionStrength;
 varying vec2 vFaceScale;
 varying vec2 vHeightLightTS;
+varying vec3 vReflectWorldPos;
 vec2 gHeightUv;
 vec3 gHeightNormal = vec3(0.0, 0.0, 1.0);
+vec3 gFaceNormal = vec3(0.0, 0.0, 1.0);
 mat3 gHeightTBN = mat3(1.0);
 
 `
@@ -1014,14 +1083,32 @@ mat3 gHeightTBN = mat3(1.0);
 
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <normal_fragment_maps>',
-      `if (uHeightEnabled > 0.5) {
+      `gFaceNormal = normal;
+if (uHeightEnabled > 0.5) {
   normal = normalize(gHeightTBN * gHeightNormal);
 }`
     );
 
+    // Replace the stock flat envMap blend: mode 1 uses the face normal, mode 2
+    // uses the per-pixel heightmap normal so reflections behave like a normal map.
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <envmap_fragment>',
+      `#ifdef USE_ENVMAP
+  if (uReflectionMode > 0.5 && uReflectionStrength > 0.0) {
+    vec3 surfaceNormal = normalize( uReflectionMode > 1.5 ? normal : gFaceNormal );
+    vec3 worldNormal = normalize( ( vec4( surfaceNormal, 0.0 ) * viewMatrix ).xyz );
+    vec3 cameraToFrag = normalize( vReflectWorldPos - cameraPosition );
+    vec3 reflectionDir = reflect( cameraToFrag, worldNormal );
+    vec4 reflectionColor = textureCube( envMap, vec3( flipEnvMap * reflectionDir.x, reflectionDir.yz ) );
+    float reflectionAmount = clamp( specularStrength * uReflectionStrength, 0.0, 1.0 );
+    outgoingLight = mix( outgoingLight, reflectionColor.rgb, reflectionAmount );
+  }
+#endif`
+    );
+
     material.userData.heightUniforms = shader.uniforms;
   };
-  material.customProgramCacheKey = () => 'procedural-heightmap-v3';
+  material.customProgramCacheKey = () => 'procedural-surface-v3';
 }
 
 function updateHeightmapButton() {
@@ -1048,33 +1135,77 @@ function setHeightMapsEnabled(enabled, persist = true) {
   for (const material of blockMaterialCache.values()) {
     const u = material.userData.heightUniforms;
     if (u) u.uHeightEnabled.value = (heightMapsEnabled && material.userData.heightRelief) ? 1 : 0;
-    const nu = material.userData.normalMaterial;
-    if (nu) nu.uniforms.uHeightEnabled.value = (heightMapsEnabled && material.userData.heightRelief) ? 1 : 0;
   }
+}
+
+function reflectionModeValue() {
+  return reflectionMode === 'normal' ? 2 : (reflectionMode === 'flat' ? 1 : 0);
 }
 
 function updateReflectionButton() {
   const btn = document.getElementById('reflectionsBtn');
   if (!btn) return;
-  btn.textContent = `Reflections: ${reflectionsEnabled ? 'On' : 'Off'}`;
+  const label = reflectionMode === 'normal' ? 'Normal' : (reflectionMode === 'flat' ? 'Flat' : 'Off');
+  btn.textContent = `Reflections: ${label}`;
   btn.classList.toggle('on', reflectionsEnabled);
   btn.classList.toggle('off', !reflectionsEnabled);
   btn.setAttribute('aria-pressed', String(reflectionsEnabled));
-  btn.title = 'Toggle screen-space reflections evaluated from the reflecting surface';
+  btn.title = 'Cycle reflections: Off → Normal (per-pixel heightmap normals) → Flat (face normals)';
 }
 
 function initReflectionToggle() {
+  const savedMode = localStorage.getItem(REFLECTION_MODE_KEY);
+  if (savedMode === 'off' || savedMode === 'normal' || savedMode === 'flat') {
+    setReflectionMode(savedMode, false);
+    return;
+  }
   const saved = localStorage.getItem(REFLECTION_STORAGE_KEY);
   const enabled = saved === null ? !!CONFIG.render.reflections : saved === '1';
-  setReflectionsEnabled(enabled, false);
+  const fallback = CONFIG.render.reflectionType === 'flat' ? 'flat' : 'normal';
+  setReflectionMode(enabled ? fallback : 'off', false);
+}
+
+function setReflectionMode(mode, persist = true) {
+  if (mode !== 'off' && mode !== 'normal' && mode !== 'flat') mode = 'off';
+  const wasEnabled = reflectionsEnabled;
+  reflectionMode = mode;
+  reflectionsEnabled = mode !== 'off';
+  CONFIG.render.reflections = reflectionsEnabled;
+  CONFIG.render.reflectionType = mode === 'flat' ? 'flat' : 'normal';
+
+  if (persist) {
+    localStorage.setItem(REFLECTION_MODE_KEY, reflectionMode);
+    localStorage.setItem(REFLECTION_STORAGE_KEY, reflectionsEnabled ? '1' : '0');
+  }
+  if (reflectionsEnabled && !wasEnabled) {
+    reflectionDirty = true;
+    reflectionTimer = REFLECTION_INTERVAL;
+  }
+
+  const modeValue = reflectionModeValue();
+  for (const material of blockMaterialCache.values()) {
+    if (!material.userData.reflective) continue;
+    material.reflectivity = reflectionsEnabled ? material.userData.reflectionStrength : 0;
+    const u = material.userData.heightUniforms;
+    if (u) {
+      u.uReflectionMode.value = modeValue;
+      u.uReflectionStrength.value = reflectionsEnabled ? material.userData.reflectionStrength : 0;
+    }
+  }
+  updateReflectionButton();
 }
 
 function setReflectionsEnabled(enabled, persist = true) {
-  reflectionsEnabled = !!enabled;
-  CONFIG.render.reflections = reflectionsEnabled;
-  if (persist) localStorage.setItem(REFLECTION_STORAGE_KEY, reflectionsEnabled ? '1' : '0');
-  if (reflectionsEnabled) ensureSSRPass();
-  updateReflectionButton();
+  if (!enabled) { setReflectionMode('off', persist); return; }
+  setReflectionMode(reflectionMode === 'off'
+    ? (CONFIG.render.reflectionType === 'flat' ? 'flat' : 'normal')
+    : reflectionMode, persist);
+}
+
+function cycleReflectionMode() {
+  const order = ['off', 'normal', 'flat'];
+  const next = order[(order.indexOf(reflectionMode) + 1) % order.length];
+  setReflectionMode(next, true);
 }
 
 /* ============================= MODEL / BLOCKSTATE LOADING ============================= */
@@ -1309,6 +1440,13 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
 
   const reflectionStrength = getReflectionStrength(texPath);
   if (texture !== magentaTex) {
+    // Translucent faces reflect across the whole side; cutout/opaque faces use
+    // the albedo alpha as the per-pixel reflectivity map.
+    const mask = translucent ? fullReflectionMask : (texture.userData?.reflectionMask || fullReflectionMask);
+    mat.envMap = reflectionTexture;
+    mat.specularMap = mask;
+    mat.combine = THREE.MixOperation;
+    mat.reflectivity = reflectionsEnabled ? reflectionStrength : 0;
     mat.userData.reflective = true;
     mat.userData.reflectionStrength = reflectionStrength;
   }
@@ -1319,7 +1457,6 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
   if (texture !== magentaTex) {
     patchHeightMaterial(mat, allowHeightRelief);
     attachSurfaceMaps(mat, texPath, allowHeightRelief);
-    mat.userData.normalMaterial = createBlockNormalMaterial(mat, allowHeightRelief, reflectionStrength);
   }
 
   blockMaterialCache.set(key, mat);
@@ -1950,6 +2087,7 @@ async function build() {
   console.log(`Pass 2 (emit): ${infos.length} blocks in ${(t2 - t1).toFixed(0)} ms`);
 
   flushBuckets();
+  reflectionDirty = true;
   updatePlayerSpawnFromWorld();
   unstuckPlayer();
   const t3 = performance.now();
@@ -2630,192 +2768,31 @@ document.getElementById('cameraBtn').addEventListener('click', () => {
   else setCameraMode('creative');
 });
 
-/* A normal/mask material per block material. Keeping the maps in the material
- * itself avoids per-object uniform updates during SSRPass's normal pass. */
-function createBlockNormalMaterial(material, allowHeightRelief, strength) {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uAlbedo: { value: material.map || flatHeightTexture },
-      uTranslucent: { value: material.transparent ? 1 : 0 },
-      uReflectStrength: { value: strength },
-      uHeightMap: { value: flatHeightTexture },
-      uHeightEnabled: { value: 0 },
-      uHeightMapTexel: { value: new THREE.Vector2(1 / 512, 1 / 512) },
-      uHeightSampleStep: { value: 1.0 },
-      uHeightFrames: { value: 1 },
-      uHeightNormalStrength: { value: Math.min(0.8, (CONFIG.render.heightMapNormalStrength ?? 2.4) * 0.35) },
-    },
-    vertexShader: `
-      attribute vec2 faceScale;
-      attribute vec3 faceTangent;
-      attribute vec3 faceBitangent;
-      varying vec2 vUv;
-      varying vec2 vFaceScale;
-      varying vec3 vViewPosition;
-      varying vec3 vViewNormal;
-      void main() {
-        vUv = uv;
-        vFaceScale = faceScale;
-        vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-        vViewPosition = -mvPosition.xyz;
-        vViewNormal = normalize( normalMatrix * normal );
-        gl_Position = projectionMatrix * mvPosition;
-      }
-    `,
-    fragmentShader: `
-      uniform sampler2D uAlbedo;
-      uniform float uTranslucent;
-      uniform float uReflectStrength;
-      uniform sampler2D uHeightMap;
-      uniform float uHeightEnabled;
-      uniform vec2 uHeightMapTexel;
-      uniform float uHeightSampleStep;
-      uniform float uHeightFrames;
-      uniform float uHeightNormalStrength;
-      varying vec2 vUv;
-      varying vec2 vFaceScale;
-      varying vec3 vViewPosition;
-      varying vec3 vViewNormal;
+function captureReflections() {
+  const gridWasVisible = gridHelper.visible;
+  gridHelper.visible = false;
 
-      void main() {
-        float alpha = texture2D( uAlbedo, vUv ).a;
-        if ( uTranslucent < 0.5 && alpha < 0.5 ) discard;
+  reflectionCamera.renderTarget = reflectionWriteTarget;
+  reflectionCamera.position.copy(camera.position);
+  reflectionCamera.updateMatrixWorld(true);
+  reflectionCamera.update(renderer, scene);
 
-        vec3 n = normalize( vViewNormal );
-        if ( uHeightEnabled > 0.5 ) {
-          vec3 hv = normalize( vViewPosition );
-          vec3 hn = n;
-          vec3 hv1 = dFdx( hv );
-          vec3 hv2 = dFdy( hv );
-          vec2 hu1 = dFdx( vUv );
-          vec2 hu2 = dFdy( vUv );
-          vec3 hp2 = cross( hv2, hn );
-          vec3 hp1 = cross( hn, hv1 );
-          vec3 ht = hp2 * hu1.x + hp1 * hu2.x;
-          vec3 hb = hp2 * hu1.y + hp1 * hu2.y;
-          float hinv = inversesqrt( max( max( dot( ht, ht ), dot( hb, hb ) ), 1e-8 ) );
-          ht *= hinv; hb *= hinv;
+  gridHelper.visible = gridWasVisible;
 
-          vec2 heightUv = vUv;
-          if ( uHeightFrames > 1.5 ) heightUv.y = fract( vUv.y * uHeightFrames );
-          vec2 hStep = uHeightMapTexel * uHeightSampleStep * vFaceScale;
-          float hL = texture2D( uHeightMap, heightUv - vec2( hStep.x, 0.0 ) ).r;
-          float hR = texture2D( uHeightMap, heightUv + vec2( hStep.x, 0.0 ) ).r;
-          float hD = texture2D( uHeightMap, heightUv - vec2( 0.0, hStep.y ) ).r;
-          float hU = texture2D( uHeightMap, heightUv + vec2( 0.0, hStep.y ) ).r;
-          vec3 heightNormal = normalize( vec3(
-            ( hL - hR ) * uHeightNormalStrength,
-            ( hD - hU ) * uHeightNormalStrength,
-            1.0 ) );
-          n = normalize( mat3( ht, hb, hn ) * heightNormal );
-        }
-
-        float mask = ( uTranslucent > 0.5 ? 1.0 : alpha ) * uReflectStrength;
-        gl_FragColor = vec4( normalize( n ) * 0.5 + 0.5, mask );
-      }
-    `,
-    side: material.side,
-  });
+  reflectionTexture = reflectionWriteTarget.texture;
+  reflectionWriteTarget = reflectionWriteTarget === reflectionTargetA ? reflectionTargetB : reflectionTargetA;
+  for (const material of blockMaterialCache.values()) {
+    if (material.userData.reflective) material.envMap = reflectionTexture;
+  }
 }
 
-/* SSRPass's stock normal pass uses one override material. Ours needs each
- * mesh's own heightmap/mask material, so render the world group mesh by mesh. */
-function renderSSRNormals(renderer, overrideMaterial, renderTarget, clearColor, clearAlpha) {
-  const prevTarget = renderer.getRenderTarget();
-  const prevAutoClear = renderer.autoClear;
-  const prevClear = renderer.getClearColor(new THREE.Color());
-  const prevAlpha = renderer.getClearAlpha();
-
-  renderer.setRenderTarget(renderTarget);
-  renderer.autoClear = false;
-  renderer.setClearColor(0x000000, 0);
-  renderer.clear(true, true, true);
-
-  const hidden = [];
-  for (const mesh of worldGroup.children) {
-    const normalMaterial = mesh.material && mesh.material.userData && mesh.material.userData.normalMaterial;
-    if (normalMaterial) {
-      mesh.userData._normalBackup = mesh.material;
-      mesh.material = normalMaterial;
-    } else {
-      hidden.push(mesh);
-      mesh.visible = false;
-    }
-  }
-  renderer.render(worldGroup, camera);
-  for (const mesh of worldGroup.children) {
-    if (mesh.userData._normalBackup) {
-      mesh.material = mesh.userData._normalBackup;
-      delete mesh.userData._normalBackup;
-    }
-  }
-  for (const mesh of hidden) mesh.visible = true;
-
-  renderer.setRenderTarget(prevTarget);
-  renderer.autoClear = prevAutoClear;
-  renderer.setClearColor(prevClear, prevAlpha);
-}
-
-let ssrSize = new THREE.Vector2();
-
-function ensureSSRPass() {
-  if (ssrPass) return;
-  renderer.getDrawingBufferSize(ssrSize);
-  ssrPass = new SSRPass({
-    renderer, scene, camera,
-    width: ssrSize.x, height: ssrSize.y,
-  });
-  ssrPass.renderToScreen = true;
-  ssrPass.renderOverride = renderSSRNormals;
-  ssrPass.maxDistance = 32;
-  ssrPass.thickness = 0.04;
-  ssrPass.opacity = 0.45;
-  ssrPass.ssrMaterial.defines.MAX_STEP = 64;
-  ssrPass.ssrMaterial.fragmentShader = ssrPass.ssrMaterial.fragmentShader
-    .replace(
-      'void main(){',
-      `void main(){
-        gl_FragColor = vec4( 0.0 );
-        float reflectionMask = texture2D( tNormal, vUv ).a;
-        if ( reflectionMask < 0.001 ) return;`
-    )
-    .replace('float op=opacity;', 'float op=opacity*reflectionMask;');
-  ssrPass.ssrMaterial.needsUpdate = true;
-
-  ssrPass.copyMaterial.fragmentShader = `
-    uniform float opacity;
-    uniform sampler2D tDiffuse;
-    varying vec2 vUv;
-    vec3 linearToSRGB( vec3 c ) {
-      vec3 low = c * 12.92;
-      vec3 high = pow( c, vec3( 1.0 / 2.4 ) ) * 1.055 - 0.055;
-      return mix( high, low, 1.0 - step( vec3( 0.0031308 ), c ) );
-    }
-    void main() {
-      vec4 texel = texture2D( tDiffuse, vUv );
-      gl_FragColor = vec4( linearToSRGB( texel.rgb ), texel.a * opacity );
-    }
-  `;
-  ssrPass.copyMaterial.needsUpdate = true;
-}
-
-function renderSceneWithReflections() {
-  ensureSSRPass();
-  renderer.getDrawingBufferSize(ssrSize);
-  // Cap the SSR buffer: the viewer can run at 3x pixel ratio, and full-res
-  // 64-step ray marching would be needlessly expensive.
-  const ssrScale = Math.min(1, 1280 / ssrSize.x, 720 / ssrSize.y);
-  const targetW = Math.max(1, Math.round(ssrSize.x * ssrScale));
-  const targetH = Math.max(1, Math.round(ssrSize.y * ssrScale));
-  if (ssrPass.width !== targetW || ssrPass.height !== targetH) {
-    ssrPass.setSize(targetW, targetH);
-  }
-  const u = ssrPass.ssrMaterial.uniforms;
-  u.cameraProjectionMatrix.value.copy(camera.projectionMatrix);
-  u.cameraInverseProjectionMatrix.value.copy(camera.projectionMatrixInverse);
-  u.cameraNear.value = camera.near;
-  u.cameraFar.value = camera.far;
-  ssrPass.render(renderer, null);
+function updateReflections(delta) {
+  if (!reflectionsEnabled) return;
+  reflectionTimer += delta;
+  if (!reflectionDirty && reflectionTimer < REFLECTION_INTERVAL) return;
+  reflectionTimer = 0;
+  reflectionDirty = false;
+  captureReflections();
 }
 
 /* ============================= ANIMATION ============================= */
@@ -2945,6 +2922,7 @@ function animate() {
       data.timer = 0;
       data.currentFrame = (data.currentFrame + 1) % data.frameCount;
       tex.offset.y = 1 - ((data.currentFrame + 1) / data.frameCount);
+      if (data.reflectionMask) data.reflectionMask.offset.y = tex.offset.y;
     }
   }
   if (cameraMode === 'creative') updatePlayer(delta);
@@ -2952,14 +2930,8 @@ function animate() {
   updateSky(delta);
   updateCelestialBodies(delta);
   updateLighting();
-  if (reflectionsEnabled) {
-    const gridWasVisible = gridHelper.visible;
-    gridHelper.visible = false;
-    renderSceneWithReflections();
-    gridHelper.visible = gridWasVisible;
-  } else {
-    renderer.render(scene, camera);
-  }
+  updateReflections(delta);
+  renderer.render(scene, camera);
 }
 
 /* ============================= SHA REFRESH ============================= */
@@ -3003,17 +2975,9 @@ async function forceRefreshSha() {
 
 document.getElementById('renderBtn').addEventListener('click', () => { setSettingsOpen(false); saveCommandsToStorage(); build(); });
 document.getElementById('heightmapBtn').addEventListener('click', () => { setHeightMapsEnabled(!heightMapsEnabled); });
-document.getElementById('reflectionsBtn').addEventListener('click', () => { setReflectionsEnabled(!reflectionsEnabled); });
+document.getElementById('reflectionsBtn').addEventListener('click', () => { cycleReflectionMode(); });
 document.getElementById('refreshShaBtn').addEventListener('click', () => { setSettingsOpen(false); forceRefreshSha(); });
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  if (ssrPass) {
-    renderer.getDrawingBufferSize(ssrSize);
-    ssrPass.setSize(ssrSize.x, ssrSize.y);
-  }
-});
+window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 
 (async () => {
   const sha = await fetchLatestCommitSha();
