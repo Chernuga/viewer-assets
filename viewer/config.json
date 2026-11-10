@@ -46,17 +46,16 @@
     "shaderSpeed": 0.0001
   },
   "render": {
-    "minContrast": 0.03,
     "concurrency": 120,
     "heightMap": true,
     "reflections": false,
+    "reflectionType": "normal",
     "heightMapGamma": 1.0,
     "heightMapNormalStrength": 2.4,
     "heightMapAO": 0.12,
     "heightMapResolution": 512,
     "heightMapEdge": 0.45,
     "heightMapEdgeThreshold": 0.05,
-    "heightMapDetail": 0.9,
     "heightMapLevels": 0,
     "heightMapLift": 0.05,
     "heightMapSeamless": true

@@ -111,13 +111,12 @@ const CONFIG_DEFAULTS = {
   },
   animation: { shaderSpeed: 0.0001 },
   render: {
-    minContrast: 0.03,
     dedupeCoincidentFaces: true,
     concurrency: 12,
     heightMap: true,
     reflections: false,
+    reflectionType: 'normal',
     heightMapResolution: 512,
-    heightMapDetail: 0.9,
     heightMapLevels: 0,
     heightMapSeamless: true,
     heightMapAO: 0.12,
@@ -254,7 +253,9 @@ scene.add(reflectionCamera);
 let reflectionTexture = reflectionTargetA.texture;
 let reflectionWriteTarget = reflectionTargetB;
 const REFLECTION_STORAGE_KEY = 'voxelBuilderReflectionsEnabled';
+const REFLECTION_MODE_KEY = 'voxelBuilderReflectionMode';
 const DEFAULT_REFLECTION_STRENGTH = 0.2;
+let reflectionMode = 'off';
 let reflectionsEnabled = false;
 let reflectionTimer = 0;
 let reflectionDirty = true;
@@ -781,45 +782,8 @@ function loadImage(url) {
 const surfaceMapCache = new Map();
 const surfaceMapPending = new Map();
 
-function wrapIndex(v, n) {
-  return ((v % n) + n) % n;
-}
-
 function srgbToLinear(c) {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-}
-
-/*
- * Edge-preserving bilateral filter. A normal blur turns mortar lines into soft
- * lumps; this keeps a brick edge a brick edge while removing single-pixel
- * colour noise from the height field.
- */
-function bilateralFilter(src, w, h, radius, sigmaSpace, sigmaRange) {
-  const out = new Float32Array(w * h);
-  const spaceScale = 1 / (2 * sigmaSpace * sigmaSpace);
-  const rangeScale = 1 / (2 * sigmaRange * sigmaRange);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const center = src[y * w + x];
-      let sum = 0, weightSum = 0;
-      for (let dy = -radius; dy <= radius; dy++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-          const v = src[wrapIndex(y + dy, h) * w + wrapIndex(x + dx, w)];
-          const d = v - center;
-          const weight = Math.exp(-(dx * dx + dy * dy) * spaceScale - d * d * rangeScale);
-          sum += v * weight;
-          weightSum += weight;
-        }
-      }
-      out[y * w + x] = sum / weightSum;
-    }
-  }
-  return out;
-}
-
-function percentile(sorted, p) {
-  if (sorted.length === 0) return 0;
-  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
 }
 
 /* Match opposite texture edges so the height field tiles across adjacent blocks. */
@@ -871,12 +835,13 @@ function canvasTextureFromGray(values, w, h, outSize, linear) {
 }
 
 /*
- * Height inference:
- *   1. perceptual luminance (Rec. 709) from the albedo, alpha-masked;
- *   2. edge-preserving bilateral filter to reject pixel noise;
- *   3. controlled high-frequency detail is added back;
- *   4. percentile contrast stretch (1%..99%) to use the full 0..1 range;
- *   5. gamma curve, then the shader derives normals, AO and bevels from it.
+ * Depth inference by whole-image color ranking:
+ *   1. collect every unique opaque RGB in the frame;
+ *   2. compare all of them against each other, sorted by Rec. 709 luminance;
+ *   3. each pixel's depth is its color's rank in that global palette (0..1);
+ *   4. apply gamma / optional height levels.
+ * No neighbouring pixels are compared: identical colors always get identical
+ * depth, and rare colors keep their true rank instead of being averaged away.
  */
 async function buildSurfaceMapsFromUrl(url) {
   const img = await loadImage(url);
@@ -895,39 +860,37 @@ async function buildSurfaceMapsFromUrl(url) {
   ctx.drawImage(img, 0, 0, w, h, 0, 0, w, h);
   const pixels = ctx.getImageData(0, 0, w, h).data;
 
-  const lum = new Float32Array(w * h);
+  const colorLuminance = new Map();
   let transparent = 0;
   for (let i = 0; i < w * h; i++) {
+    if (pixels[i * 4 + 3] < 128) { transparent++; continue; }
+    const key = (pixels[i * 4] << 16) | (pixels[i * 4 + 1] << 8) | pixels[i * 4 + 2];
+    if (colorLuminance.has(key)) continue;
     const r = srgbToLinear(pixels[i * 4] / 255);
     const g = srgbToLinear(pixels[i * 4 + 1] / 255);
     const b = srgbToLinear(pixels[i * 4 + 2] / 255);
-    const a = pixels[i * 4 + 3] / 255;
-    if (a < 0.5) transparent++;
-    lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) * a;
+    colorLuminance.set(key, 0.2126 * r + 0.7152 * g + 0.0722 * b);
   }
 
   const opaque = 1 - transparent / (w * h);
   if (opaque < 0.05) return null;
 
-  // Preserve the macro form with an edge-preserving base, then put a controlled
-  // amount of the high-frequency detail back so 16x features stay readable.
-  const base = bilateralFilter(lum, w, h, 1, 1.0, 0.16);
-  const detailBoost = CONFIG.render.heightMapDetail ?? 0.9;
-  const raw = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++) raw[i] = base[i] + (lum[i] - base[i]) * detailBoost;
+  // Compare every unique color against every other, by luminance.
+  const palette = Array.from(colorLuminance.entries())
+    .sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+  if (palette.length < 2) return null;
 
-  const sorted = Array.from(raw).sort((a, b) => a - b);
-  const lo = percentile(sorted, 0.01);
-  const hi = percentile(sorted, 0.99);
-  const range = hi - lo;
-  if (range < Math.max(0.0001, CONFIG.render.minContrast)) return null;
+  const rank = new Map();
+  const denom = palette.length - 1;
+  for (let i = 0; i < palette.length; i++) rank.set(palette[i][0], i / denom);
 
   const gamma = Math.max(0.25, CONFIG.render.heightMapGamma ?? 1.0);
   const levels = Math.max(0, Math.round(CONFIG.render.heightMapLevels || 0));
   const height = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) {
-    let v = Math.max(0, Math.min(1, (raw[i] - lo) / range));
-    v = Math.pow(v, gamma);
+    if (pixels[i * 4 + 3] < 128) { height[i] = 0; continue; }
+    const key = (pixels[i * 4] << 16) | (pixels[i * 4 + 1] << 8) | pixels[i * 4 + 2];
+    let v = Math.pow(rank.get(key) || 0, gamma);
     if (levels > 1) v = Math.round(v * (levels - 1)) / (levels - 1);
     height[i] = v;
   }
@@ -989,10 +952,10 @@ function attachSurfaceMaps(material, texPath, allowHeightRelief) {
 /* Heightmap shading for MeshLambertMaterial. The fragment shader reads the
  * height field, derives normals/AO/bevels and never displaces geometry; the
  * toggle is a uniform, so no world rebuild. */
-function patchHeightMaterial(material) {
+function patchHeightMaterial(material, allowHeightRelief = false) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uHeightMap = { value: material.userData.heightTexture || flatHeightTexture };
-    shader.uniforms.uHeightEnabled = { value: (heightMapsEnabled && !!material.userData.heightTexture) ? 1 : 0 };
+    shader.uniforms.uHeightEnabled = { value: (heightMapsEnabled && allowHeightRelief && !!material.userData.heightTexture) ? 1 : 0 };
     shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 512, 1 / 512) };
     shader.uniforms.uHeightSampleStep = { value: 1.0 };
     shader.uniforms.uHeightFrames = { value: material.userData.heightFrames || 1 };
@@ -1002,6 +965,10 @@ function patchHeightMaterial(material) {
     shader.uniforms.uHeightLift = { value: CONFIG.render.heightMapLift ?? 0.05 };
     shader.uniforms.uHeightNormalStrength = { value: (CONFIG.render.heightMapNormalStrength ?? 2.4) };
     shader.uniforms.uHeightSun = heightSunDir;
+    shader.uniforms.uReflectionMode = { value: reflectionMode === 'normal' ? 2 : (reflectionMode === 'flat' ? 1 : 0) };
+    shader.uniforms.uReflectionStrength = {
+      value: reflectionsEnabled ? (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) : 0,
+    };
 
     shader.vertexShader = shader.vertexShader.replace(
       '#include <common>',
@@ -1011,7 +978,8 @@ attribute vec3 faceTangent;
 attribute vec3 faceBitangent;
 uniform vec3 uHeightSun;
 varying vec2 vFaceScale;
-varying vec2 vHeightLightTS;`
+varying vec2 vHeightLightTS;
+varying vec3 vReflectWorldPos;`
     );
     shader.vertexShader = shader.vertexShader.replace(
       '#include <begin_vertex>',
@@ -1019,7 +987,8 @@ varying vec2 vHeightLightTS;`
 vec2 heightLight = vec2(dot(uHeightSun, faceTangent), dot(uHeightSun, faceBitangent));
 float heightLightLen = length(heightLight);
 vHeightLightTS = heightLightLen > 1e-4 ? heightLight / heightLightLen : vec2(0.0, 1.0);
-#include <begin_vertex>`
+#include <begin_vertex>
+vReflectWorldPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;`
     );
 
     shader.fragmentShader = shader.fragmentShader.replace(
@@ -1035,10 +1004,14 @@ uniform float uHeightEdge;
 uniform float uHeightEdgeThreshold;
 uniform float uHeightLift;
 uniform float uHeightNormalStrength;
+uniform float uReflectionMode;
+uniform float uReflectionStrength;
 varying vec2 vFaceScale;
 varying vec2 vHeightLightTS;
+varying vec3 vReflectWorldPos;
 vec2 gHeightUv;
 vec3 gHeightNormal = vec3(0.0, 0.0, 1.0);
+vec3 gFaceNormal = vec3(0.0, 0.0, 1.0);
 mat3 gHeightTBN = mat3(1.0);
 
 `
@@ -1110,14 +1083,32 @@ mat3 gHeightTBN = mat3(1.0);
 
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <normal_fragment_maps>',
-      `if (uHeightEnabled > 0.5) {
+      `gFaceNormal = normal;
+if (uHeightEnabled > 0.5) {
   normal = normalize(gHeightTBN * gHeightNormal);
 }`
     );
 
+    // Replace the stock flat envMap blend: mode 1 uses the face normal, mode 2
+    // uses the per-pixel heightmap normal so reflections behave like a normal map.
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <envmap_fragment>',
+      `#ifdef USE_ENVMAP
+  if (uReflectionMode > 0.5 && uReflectionStrength > 0.0) {
+    vec3 surfaceNormal = normalize( uReflectionMode > 1.5 ? normal : gFaceNormal );
+    vec3 worldNormal = normalize( ( vec4( surfaceNormal, 0.0 ) * viewMatrix ).xyz );
+    vec3 cameraToFrag = normalize( vReflectWorldPos - cameraPosition );
+    vec3 reflectionDir = reflect( cameraToFrag, worldNormal );
+    vec4 reflectionColor = textureCube( envMap, vec3( flipEnvMap * reflectionDir.x, reflectionDir.yz ) );
+    float reflectionAmount = clamp( specularStrength * uReflectionStrength, 0.0, 1.0 );
+    outgoingLight = mix( outgoingLight, reflectionColor.rgb, reflectionAmount );
+  }
+#endif`
+    );
+
     material.userData.heightUniforms = shader.uniforms;
   };
-  material.customProgramCacheKey = () => 'procedural-heightmap-v2';
+  material.customProgramCacheKey = () => 'procedural-surface-v3';
 }
 
 function updateHeightmapButton() {
@@ -1147,35 +1138,74 @@ function setHeightMapsEnabled(enabled, persist = true) {
   }
 }
 
+function reflectionModeValue() {
+  return reflectionMode === 'normal' ? 2 : (reflectionMode === 'flat' ? 1 : 0);
+}
+
 function updateReflectionButton() {
   const btn = document.getElementById('reflectionsBtn');
   if (!btn) return;
-  btn.textContent = `Reflections: ${reflectionsEnabled ? 'On' : 'Off'}`;
+  const label = reflectionMode === 'normal' ? 'Normal' : (reflectionMode === 'flat' ? 'Flat' : 'Off');
+  btn.textContent = `Reflections: ${label}`;
   btn.classList.toggle('on', reflectionsEnabled);
   btn.classList.toggle('off', !reflectionsEnabled);
   btn.setAttribute('aria-pressed', String(reflectionsEnabled));
-  btn.title = 'Toggle the real-time cube-map reflections on water, ice, glass and metal blocks';
+  btn.title = 'Cycle reflections: Off → Normal (per-pixel heightmap normals) → Flat (face normals)';
 }
 
 function initReflectionToggle() {
+  const savedMode = localStorage.getItem(REFLECTION_MODE_KEY);
+  if (savedMode === 'off' || savedMode === 'normal' || savedMode === 'flat') {
+    setReflectionMode(savedMode, false);
+    return;
+  }
   const saved = localStorage.getItem(REFLECTION_STORAGE_KEY);
   const enabled = saved === null ? !!CONFIG.render.reflections : saved === '1';
-  setReflectionsEnabled(enabled, false);
+  const fallback = CONFIG.render.reflectionType === 'flat' ? 'flat' : 'normal';
+  setReflectionMode(enabled ? fallback : 'off', false);
 }
 
-function setReflectionsEnabled(enabled, persist = true) {
-  reflectionsEnabled = !!enabled;
+function setReflectionMode(mode, persist = true) {
+  if (mode !== 'off' && mode !== 'normal' && mode !== 'flat') mode = 'off';
+  const wasEnabled = reflectionsEnabled;
+  reflectionMode = mode;
+  reflectionsEnabled = mode !== 'off';
   CONFIG.render.reflections = reflectionsEnabled;
-  if (persist) localStorage.setItem(REFLECTION_STORAGE_KEY, reflectionsEnabled ? '1' : '0');
-  if (reflectionsEnabled) {
+  CONFIG.render.reflectionType = mode === 'flat' ? 'flat' : 'normal';
+
+  if (persist) {
+    localStorage.setItem(REFLECTION_MODE_KEY, reflectionMode);
+    localStorage.setItem(REFLECTION_STORAGE_KEY, reflectionsEnabled ? '1' : '0');
+  }
+  if (reflectionsEnabled && !wasEnabled) {
     reflectionDirty = true;
     reflectionTimer = REFLECTION_INTERVAL;
   }
+
+  const modeValue = reflectionModeValue();
   for (const material of blockMaterialCache.values()) {
     if (!material.userData.reflective) continue;
     material.reflectivity = reflectionsEnabled ? material.userData.reflectionStrength : 0;
+    const u = material.userData.heightUniforms;
+    if (u) {
+      u.uReflectionMode.value = modeValue;
+      u.uReflectionStrength.value = reflectionsEnabled ? material.userData.reflectionStrength : 0;
+    }
   }
   updateReflectionButton();
+}
+
+function setReflectionsEnabled(enabled, persist = true) {
+  if (!enabled) { setReflectionMode('off', persist); return; }
+  setReflectionMode(reflectionMode === 'off'
+    ? (CONFIG.render.reflectionType === 'flat' ? 'flat' : 'normal')
+    : reflectionMode, persist);
+}
+
+function cycleReflectionMode() {
+  const order = ['off', 'normal', 'flat'];
+  const next = order[(order.indexOf(reflectionMode) + 1) % order.length];
+  setReflectionMode(next, true);
 }
 
 /* ============================= MODEL / BLOCKSTATE LOADING ============================= */
@@ -1425,7 +1455,7 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
   // one frame and the shader folds the frame V range onto it.
   const allowHeightRelief = !flat && !translucent;
   if (texture !== magentaTex) {
-    if (allowHeightRelief) patchHeightMaterial(mat);
+    patchHeightMaterial(mat, allowHeightRelief);
     attachSurfaceMaps(mat, texPath, allowHeightRelief);
   }
 
@@ -2945,7 +2975,7 @@ async function forceRefreshSha() {
 
 document.getElementById('renderBtn').addEventListener('click', () => { setSettingsOpen(false); saveCommandsToStorage(); build(); });
 document.getElementById('heightmapBtn').addEventListener('click', () => { setHeightMapsEnabled(!heightMapsEnabled); });
-document.getElementById('reflectionsBtn').addEventListener('click', () => { setReflectionsEnabled(!reflectionsEnabled); });
+document.getElementById('reflectionsBtn').addEventListener('click', () => { cycleReflectionMode(); });
 document.getElementById('refreshShaBtn').addEventListener('click', () => { setSettingsOpen(false); forceRefreshSha(); });
 window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 

@@ -9,15 +9,15 @@ default comes from `viewer/config.json` -> `render.heightMap`.
 
 **Algorithm** (`index.html`, "PROCEDURAL HEIGHT MAPS"):
 
-1. Read the albedo texture, convert to linear light and compute Rec. 709
-   luminance, alpha-masking cutout pixels so they do not create false height.
-2. Run an edge-preserving bilateral filter (3x3, colour-range weighted) to
-   remove pixel noise without turning brick mortar lines into soft lumps.
-3. Add a controlled amount of the high-frequency detail back, contrast-stretch
-   the 1st..99th percentile to 0..1, apply gamma, and optionally quantize the
-   result into flat height levels. Brightness is used directly: the darkest
-   pixels are the lowest points and the brightest are the highest (no
-   inversion).
+1. Read the albedo texture and collect every unique opaque RGB colour in the
+   frame. Transparent cutout pixels are excluded.
+2. Compare all of those colours against each other, sorted globally by Rec. 709
+   luminance. Each colour gets a rank in that palette, so identical colours
+   always get identical depth and rare colours keep their true rank.
+3. Map each pixel to its colour's rank in 0..1, apply gamma, and optionally
+   quantize the result into flat height levels. No neighbouring pixels are
+   compared when defining depth; the darkest colour is the lowest and the
+   brightest is the highest (no inversion).
 4. The shader consumes that heightmap, not a normal-map image:
    - tangent-space normals are derived from height differences in the fragment
      shader;
@@ -77,8 +77,8 @@ Config knobs (`viewer/config.json`):
 "render": {
   "heightMap": true,
   "reflections": false,
+  "reflectionType": "normal",
   "heightMapResolution": 512,
-  "heightMapDetail": 0.9,
   "heightMapLevels": 0,
   "heightMapSeamless": true,
   "heightMapAO": 0.12,
@@ -91,8 +91,7 @@ Config knobs (`viewer/config.json`):
 ```
 
 `heightMapResolution` is the nearest-neighbour heightmap size (512 default,
-512 max), `heightMapDetail` controls how much high-frequency detail is kept,
-`heightMapLevels` quantizes the height field (0 = off), `heightMapSeamless`
+512 max), `heightMapLevels` quantizes the height field (0 = off), `heightMapSeamless`
 matches opposite texture edges for seamless tiling, `heightMapEdge` /
 `heightMapEdgeThreshold` control the outlined bevel, `heightMapLift` adds a
 small overall brightness lift when heightmaps are on, `heightMapAO` is
@@ -106,32 +105,37 @@ Running the heightmap pipeline needs nothing beyond the existing albedo files.
 
 ## Reflections
 
-**Reflections: On/Off** (first item in Settings) enables real-time cube-map
-reflections on **every block side**. Each material keeps a per-texel reflection
-mask sampled as Three.js' Lambert `specularMap`: the albedo alpha channel is the
-map, so opaque texels reflect and transparent cutout pixels do not. Translucent
-sides (water, ice, glass) use a fully white mask, which reflects the whole side.
-The material class only tunes the overall strength (stone ~0.2, ice/glass/metal
-~0.5-0.7); the per-pixel mask does the pixel-level selection.
+**Reflections** (first item in Settings) cycles `Off → Normal → Flat`. It enables
+real-time cube-map reflections on **every block side**. Each material keeps a
+per-texel reflection mask sampled as Three.js' Lambert `specularMap`: the albedo
+alpha channel is the map, so opaque texels reflect and transparent cutout pixels
+do not. Translucent sides (water, ice, glass) use a fully white mask, which
+reflects the whole side. The material class only tunes the overall strength
+(stone ~0.2, ice/glass/metal ~0.5-0.7); the per-pixel mask does the pixel-level
+selection.
 
-Reflections are mixed with `MixOperation`, so they follow each face normal and
-blend with the existing heightmap normal. Animated textures use a full-strip
-alpha mask whose V offset is kept in sync with the albedo frame.
+`Normal` mode rebuilds the reflection vector from the per-pixel heightmap normal
+(the same normal used for shading), so reflections behave like a normal map and
+follow the texture relief. `Flat` mode uses the face normal only. Both are
+selected by the `uReflectionMode` uniform; switching modes does not rebuild the
+world or recapture the probe. Animated textures use a full-strip alpha mask whose
+V offset is kept in sync with the albedo frame.
 
 A 128px `CubeCamera` probe renders the scene from the player's eye every 0.35 s
-while the toggle is on. Two cube targets ping-pong: the scene is captured into
+while reflections are on. Two cube targets ping-pong: the scene is captured into
 one while materials still sample the other, avoiding a WebGL feedback loop now
 that all block materials reflect. The debug grid is hidden during the probe.
-Turning reflections off sets `reflectivity` to zero and stops the captures, so
-there is no world rebuild. The feature is off by default because each capture is
-six extra scene renders; the config default is `render.reflections`.
+Turning reflections off sets `uReflectionStrength` to zero and stops the
+captures, so there is no world rebuild. The feature is off by default because
+each capture is six extra scene renders; the config defaults are
+`render.reflections` and `render.reflectionType`.
 
 ## Settings menu
 
 Only **Build** stays in the header. The **Settings** button below it opens a
 dropdown containing the field-of-view slider (30-110°), the heightmap toggle,
-the reflections toggle, the Creative/Orbit camera switch, and Refresh SHA.
-Clicking outside the menu or pressing Esc closes it.
+the reflections mode cycle (Off/Normal/Flat), the Creative/Orbit camera switch,
+and Refresh SHA. Clicking outside the menu or pressing Esc closes it.
 
 The FOV slider applies live to both cameras and is stored in `localStorage`
 (`voxelBuilderFov`), overriding `player.fov` from the config on later loads.
