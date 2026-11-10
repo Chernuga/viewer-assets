@@ -77,7 +77,6 @@ Config knobs (`viewer/config.json`):
 "render": {
   "heightMap": true,
   "reflections": false,
-  "reflectionType": "normal",
   "heightMapResolution": 512,
   "heightMapLevels": 0,
   "heightMapSeamless": true,
@@ -105,37 +104,27 @@ Running the heightmap pipeline needs nothing beyond the existing albedo files.
 
 ## Reflections
 
-**Reflections** (first item in Settings) cycles `Off → Normal → Flat`. It enables
-real-time cube-map reflections on **every block side**. Each material keeps a
-per-texel reflection mask sampled as Three.js' Lambert `specularMap`: the albedo
-alpha channel is the map, so opaque texels reflect and transparent cutout pixels
-do not. Translucent sides (water, ice, glass) use a fully white mask, which
-reflects the whole side. The material class only tunes the overall strength
-(stone ~0.2, ice/glass/metal ~0.5-0.7); the per-pixel mask does the pixel-level
-selection.
+**Reflections: On/Off** (first item in Settings) enables screen-space reflections
+on every block side. Each frame is rendered into a beauty target with a depth
+texture; a second pass writes the view-space normal and a per-pixel reflection
+mask (albedo alpha, or 1 for translucent sides). The SSR pass reconstructs the
+fragment's view position from depth, builds the reflected ray from the
+per-pixel heightmap normal, and ray-marches that ray through the visible scene.
+The reflection is therefore evaluated from the **reflecting surface**, not from
+a probe at the player's eye.
 
-`Normal` mode rebuilds the reflection vector from the per-pixel heightmap normal
-(the same normal used for shading), so reflections behave like a normal map and
-follow the texture relief. `Flat` mode uses the face normal only. Both are
-selected by the `uReflectionMode` uniform; switching modes does not rebuild the
-world or recapture the probe. Animated textures use a full-strip alpha mask whose
-V offset is kept in sync with the albedo frame.
-
-A 128px `CubeCamera` probe renders the scene from the player's eye every 0.35 s
-while reflections are on. Two cube targets ping-pong: the scene is captured into
-one while materials still sample the other, avoiding a WebGL feedback loop now
-that all block materials reflect. The debug grid is hidden during the probe.
-Turning reflections off sets `uReflectionStrength` to zero and stops the
-captures, so there is no world rebuild. The feature is off by default because
-each capture is six extra scene renders; the config defaults are
-`render.reflections` and `render.reflectionType`.
+There is only one reflection style now: the normal-map style. The mask suppresses
+transparent cutout pixels and scales the reflection by material class (stone
+~0.2, ice/glass/metal ~0.5-0.7). Off restores the direct scene render with no SSR
+targets or passes. The feature is off by default; the config flag is
+`render.reflections`.
 
 ## Settings menu
 
 Only **Build** stays in the header. The **Settings** button below it opens a
 dropdown containing the field-of-view slider (30-110°), the heightmap toggle,
-the reflections mode cycle (Off/Normal/Flat), the Creative/Orbit camera switch,
-and Refresh SHA. Clicking outside the menu or pressing Esc closes it.
+the reflections toggle, the Creative/Orbit camera switch, and Refresh SHA.
+Clicking outside the menu or pressing Esc closes it.
 
 The FOV slider applies live to both cameras and is stored in `localStorage`
 (`voxelBuilderFov`), overriding `player.fov` from the config on later loads.
