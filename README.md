@@ -259,17 +259,7 @@ Entity solid: chests, signs. Should use alphaTest: 0.1 (they don't have transpar
 Vanilla declares this in the model's render_type field (1.21+) or via hardcoded mappings. We can read the field or maintain a set of block-name prefixes.
 
 3. Water and lava fluids
-Fluids have:
-
-A lowered top surface (from y=14 to y=16 depending on whether they're a source block)
-
-Flowing animation direction based on neighbors
-
-Internal culling between adjacent water blocks
-
-Special side textures in some states
-
-Currently you'd see a full-height blue cube.
+Fluids now get a synthetic full-cube fallback model using `water_still` / `lava_still` (water tinted blue and translucent, lava opaque). Faces between adjacent fluid cells are culled so pools do not double-blend. Still missing: the lowered fluid top surface, flowing direction based on neighbours, and special side textures in some states.
 
 Shader-based blocks we haven't integrated
 4. Beacon beam — a vertical column with rendertype_beacon_beam. Self-contained, similar to the end portal.
@@ -287,7 +277,9 @@ Shape edge cases
 
 10. Doors, trapdoors, fence gates — open/closed states, hinge sides.
 
-11. Custom tints per biome — currently we hardcode plains. In principle we can sample a colormap per world position, but without biome data it's a guess anyway.
+11. Custom tints per biome — grass/foliage colormaps are sampled with fixed
+plains temperature/humidity. Without biome data this is a reasonable fixed
+plains tint, not a per-position one.
 
 Quality of life
 12. URL sharing — encode the commands in location.hash so a link reproduces the scene.

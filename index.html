@@ -1496,8 +1496,11 @@ async function loadColormaps() {
 
 function getBiomeColor(temp, humidity, cmap) {
   if (!cmap) return new THREE.Color(1, 1, 1);
-  const x = Math.min(cmap.w - 1, Math.max(0, Math.floor((1 - humidity) * (cmap.w - 1))));
-  const y = Math.min(cmap.h - 1, Math.max(0, Math.floor((1 - temp) * (cmap.h - 1))));
+  // The colormap's valid triangle is lower-left: X is inverted temperature,
+  // Y is inverted humidity. The previous order sampled the white area outside
+  // the triangle for typical plains values, leaving plants white.
+  const x = Math.min(cmap.w - 1, Math.max(0, Math.floor((1 - temp) * (cmap.w - 1))));
+  const y = Math.min(cmap.h - 1, Math.max(0, Math.floor((1 - humidity) * (cmap.h - 1))));
   const i = (y * cmap.w + x) * 4;
   return new THREE.Color(cmap.data[i] / 255, cmap.data[i + 1] / 255, cmap.data[i + 2] / 255);
 }
@@ -1507,9 +1510,11 @@ function getTintColor(tintIndex) {
   if (tintColorCache.has(tintIndex)) return tintColorCache.get(tintIndex);
   const temp = 0.8, humidity = 0.4;
   let color;
-  if (tintIndex === 0) color = getBiomeColor(temp, humidity, grassColormapData);
-  else if (tintIndex === 1) color = getBiomeColor(temp, humidity, foliageColormapData);
-  else if (tintIndex === 2) color = new THREE.Color(0.2, 0.4, 1.0);
+  if (tintIndex === 0) {
+    color = grassColormapData ? getBiomeColor(temp, humidity, grassColormapData) : new THREE.Color(0.45, 0.70, 0.30);
+  } else if (tintIndex === 1) {
+    color = foliageColormapData ? getBiomeColor(temp, humidity, foliageColormapData) : new THREE.Color(0.38, 0.62, 0.24);
+  } else if (tintIndex === 2) color = new THREE.Color(0.2, 0.4, 1.0);
   else color = new THREE.Color(1, 1, 1);
   tintColorCache.set(tintIndex, color);
   return color;
@@ -1518,7 +1523,7 @@ function getTintColor(tintIndex) {
 /* ============================= MATERIAL CACHE ============================= */
 
 const TRANSLUCENT_BLOCKS = new Set([
-  'water', 'bubble_column', 'ice', 'blue_ice', 'frosted_ice',
+  'water', 'bubble_column', 'glass', 'ice', 'blue_ice', 'frosted_ice',
   'slime_block', 'honey_block', 'nether_portal', 'tinted_glass',
 ]);
 function isTranslucentBlock(id) {
@@ -1898,7 +1903,7 @@ function entriesAreOpaqueCube(entries) {
   return true;
 }
 
-async function collectBlockFaces(info, opaquePositions) {
+async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set()) {
   const { id, pos, entries } = info;
   if (!entries || entries.length === 0) return;
 
@@ -1909,6 +1914,7 @@ async function collectBlockFaces(info, opaquePositions) {
   if (shaderConfig) overrideMaterial = await createMCShaderMaterial(shaderConfig);
 
   const translucent = isTranslucentBlock(id);
+  const fluid = isFluidBlock(id);
   const selfOpaque = !shaderConfig && entriesAreOpaqueCube(entries);
   const blockKey = `${pos.x},${pos.y},${pos.z}`;
 
@@ -1929,10 +1935,13 @@ async function collectBlockFaces(info, opaquePositions) {
 
     for (const el of data.elements) {
       let skipFaces = null;
-      if (selfOpaque && isFullCubeElement(el)) {
+      if (isFullCubeElement(el)) {
+        // Opaque cubes hide faces against other opaque cubes; fluid cubes hide
+        // faces between adjacent fluid cells so pools don't double-blend.
         for (const fn of FACE_NAMES) {
           const d = FACE_DIRS[fn];
-          if (opaquePositions.has(`${pos.x + d[0]},${pos.y + d[1]},${pos.z + d[2]}`)) {
+          const nk = `${pos.x + d[0]},${pos.y + d[1]},${pos.z + d[2]}`;
+          if ((selfOpaque && opaquePositions.has(nk)) || (fluid && fluidPositions.has(nk))) {
             (skipFaces || (skipFaces = new Set())).add(fn);
           }
         }
@@ -2059,6 +2068,27 @@ function clearWorld() {
 
 /* ============================= MODEL SELECTION ============================= */
 
+const FLUID_BLOCKS = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);
+function isFluidBlock(id) {
+  return FLUID_BLOCKS.has(id.replace('minecraft:', ''));
+}
+
+function createFluidModel(id) {
+  const fluid = id.includes('lava') ? 'lava' : 'water';
+  const faces = {};
+  for (const faceName of FACE_NAMES) {
+    faces[faceName] = {
+      uv: [0, 0, 16, 16],
+      texture: '#all',
+    };
+    if (fluid === 'water') faces[faceName].tintindex = 2;
+  }
+  return {
+    textures: { all: `block/${fluid}_still` },
+    elements: [{ from: [0, 0, 0], to: [16, 16, 16], faces }],
+  };
+}
+
 async function getBlockModels(blockId, properties, pos) {
   const stateData = await loadBlockstate(blockId);
   const defaults = getDefaultProperties(stateData, blockId.replace('minecraft:', ''));
@@ -2101,7 +2131,10 @@ async function getBlockModels(blockId, properties, pos) {
 
   const result = [];
   for (const app of modelApps) {
-    const data = await loadModel(app.model);
+    let data = await loadModel(app.model);
+    if (data && isFluidBlock(blockId) && (!data.elements || data.elements.length === 0)) {
+      data = { ...data, ...createFluidModel(blockId) };
+    }
     if (data) result.push({ data, x: app.x, y: app.y });
   }
   return result;
@@ -2151,6 +2184,7 @@ async function build() {
   clearWorld();
   errorOverlay.textContent = ''; errorOverlay.style.display = 'none';
   await loadColormaps();
+  tintColorCache.clear();
 
   const placementMap = new Map();
   worldBounds = { minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity };
@@ -2185,6 +2219,7 @@ async function build() {
   /* ---- pass 1: resolve models in parallel ---- */
   const blockInfo = new Map();
   const opaquePositions = new Set();
+  const fluidPositions = new Set();
 
   const { errors: resolveErrors } = await mapWithConcurrency(entries, concurrency, async ([key, spec]) => {
     const [id, props] = parseBlockSpec(spec);
@@ -2192,6 +2227,7 @@ async function build() {
     const pos = { x: parseInt(xStr, 10), y: parseInt(yStr, 10), z: parseInt(zStr, 10) };
     const modelEntries = await getBlockModels(id, props, pos);
     blockInfo.set(key, { id, pos, entries: modelEntries });
+    if (isFluidBlock(id)) fluidPositions.add(key);
     if (!SHADER_BLOCK_IDS.has(id) && !isTranslucentBlock(id) && entriesAreOpaqueCube(modelEntries)) {
       opaquePositions.add(key);
     }
@@ -2203,7 +2239,7 @@ async function build() {
   /* ---- pass 2: emit geometry in parallel ---- */
   const infos = Array.from(blockInfo.values());
   const { errors: emitErrors } = await mapWithConcurrency(infos, concurrency, async (info) => {
-    await collectBlockFaces(info, opaquePositions);
+    await collectBlockFaces(info, opaquePositions, fluidPositions);
   });
   const t2 = performance.now();
   for (const e of emitErrors) showError(`Failed to place ${e.item.id}: ${e.error.message}`);
