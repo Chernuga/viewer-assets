@@ -116,7 +116,7 @@ const CONFIG_DEFAULTS = {
     heightMap: true,
     reflections: false,
     reflectionType: 'normal',
-    heightMapResolution: 512,
+    heightMapResolution: 256,
     heightMapLevels: 0,
     heightMapSeamless: true,
     heightMapAO: 0.12,
@@ -897,7 +897,7 @@ async function buildSurfaceMapsFromUrl(url) {
   if (CONFIG.render.heightMapSeamless !== false) makePeriodic(height, w, h);
 
   const heightTexture = canvasTextureFromGray(
-    height, w, h, CONFIG.render.heightMapResolution || 512, false);
+    height, w, h, CONFIG.render.heightMapResolution || 256, false);
 
   return {
     width: heightTexture.userData.size, height: heightTexture.userData.size,
@@ -956,7 +956,7 @@ function patchHeightMaterial(material, allowHeightRelief = false) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uHeightMap = { value: material.userData.heightTexture || flatHeightTexture };
     shader.uniforms.uHeightEnabled = { value: (heightMapsEnabled && allowHeightRelief && !!material.userData.heightTexture) ? 1 : 0 };
-    shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 512, 1 / 512) };
+    shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 256, 1 / 256) };
     shader.uniforms.uHeightSampleStep = { value: 1.0 };
     shader.uniforms.uHeightFrames = { value: material.userData.heightFrames || 1 };
     shader.uniforms.uHeightAO = { value: CONFIG.render.heightMapAO ?? 0.12 };

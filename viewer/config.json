@@ -53,7 +53,7 @@
     "heightMapGamma": 1.0,
     "heightMapNormalStrength": 2.4,
     "heightMapAO": 0.12,
-    "heightMapResolution": 512,
+    "heightMapResolution": 256,
     "heightMapEdge": 0.45,
     "heightMapEdgeThreshold": 0.05,
     "heightMapLevels": 0,

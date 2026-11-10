@@ -29,7 +29,7 @@ default comes from `viewer/config.json` -> `render.heightMap`.
      per-face tangent/bitangent attributes; the fragment only does one dot.
      There is no per-fragment world-to-tangent light transform;
    - low areas are darkened with a height cavity/AO term.
-   The height field is expanded to 512x with nearest-neighbour steps, so the
+   The height field is expanded to 256x with nearest-neighbour steps, so the
    bevels stay crisp at screen resolution instead of being smoothed. The
    heightmap edges are matched (periodic) so same-texture blocks meet without a
    seam, and a per-vertex `faceScale` keeps the bevel width constant on slabs,
@@ -78,7 +78,7 @@ Config knobs (`viewer/config.json`):
   "heightMap": true,
   "reflections": false,
   "reflectionType": "normal",
-  "heightMapResolution": 512,
+  "heightMapResolution": 256,
   "heightMapLevels": 0,
   "heightMapSeamless": true,
   "heightMapAO": 0.12,
@@ -90,7 +90,7 @@ Config knobs (`viewer/config.json`):
 }
 ```
 
-`heightMapResolution` is the nearest-neighbour heightmap size (512 default,
+`heightMapResolution` is the nearest-neighbour heightmap size (256 default,
 512 max), `heightMapLevels` quantizes the height field (0 = off), `heightMapSeamless`
 matches opposite texture edges for seamless tiling, `heightMapEdge` /
 `heightMapEdgeThreshold` control the outlined bevel, `heightMapLift` adds a
