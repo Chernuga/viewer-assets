@@ -181,7 +181,8 @@ Ctrl+D bookmarks) uses the Keyboard Lock API, which Chrome only enables in
 fullscreen, so clicking the canvas enters fullscreen, captures the mouse, and
 locks `W`/`A`/`D`/Ctrl. Windows' Meta key is deliberately left unlocked so
 Win+Shift+S (Snipping Tool) still reaches the OS; Cmd sprinting remains locked on
-macOS. If the browser denies the lock, Ctrl falls back to double-tap `W`
+macOS. Ctrl/Cmd+S is prevented everywhere so it cannot open the browser save
+dialog. If the browser denies the lock, Ctrl falls back to double-tap `W`
 sprinting. Releasing the mouse (Esc) releases the keyboard lock too.
 Movement is simulated at 20 ticks/second with render interpolation, using the
 Java Edition constants:
@@ -196,9 +197,7 @@ Java Edition constants:
 
 Gravity is 0.08 per tick with 0.98 vertical drag (terminal -3.92), jump velocity
 is 0.42 (1.2522 blocks high) with the 0.2 sprint-jump boost, flight has a 0.15
-vertical impulse with 0.6 drag, and the player auto-steps up 1.0 block (a
-viewer-assist extension: full blocks, slabs and stairs all step without
-jumping). The
+vertical impulse with 0.6 drag, and the player auto-steps up 0.6 blocks. The
 hitbox is 0.6x1.8 (1.5 when sneaking) with a 1.62 eye height (1.27 sneaking).
 The crouch eye-height transition is smoothed at render rate instead of ticking
 in 20 Hz steps. Sneaking backs away from ledges, and the FOV widens while flying

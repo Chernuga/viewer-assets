@@ -2331,7 +2331,7 @@ async function build() {
  *  - jump 0.42, gravity 0.08, vertical drag 0.98 (terminal -3.92)
  *  - flight accel 0.05 (x2 sprinting), drag 0.91, vertical impulse 0.15 with 0.6 drag
  *  - double-tap jump toggles flight, landing while flying disables it
- *  - 1.0 step height (viewer auto-step assist), 0.6x1.8 hitbox (1.5 sneaking), 1.62 eye (1.27 sneaking)
+ *  - 0.6 step height, 0.6x1.8 hitbox (1.5 sneaking), 1.62 eye (1.27 sneaking)
  * All simulation runs at 20 ticks/second with render interpolation.
  */
 
@@ -2341,7 +2341,7 @@ const PLAYER_HEIGHT = 1.8;
 const PLAYER_SNEAK_HEIGHT = 1.5;
 const EYE_HEIGHT = 1.62;
 const EYE_HEIGHT_SNEAK = 1.27;
-const STEP_HEIGHT = 1.0;
+const STEP_HEIGHT = 0.6;
 const GRAVITY = 0.08;
 const AIR_DRAG = 0.91;
 const GROUND_DRAG = 0.6 * 0.91;
@@ -2498,9 +2498,9 @@ function movePlayerHorizontal(axis) {
 
   player.collidedHorizontally = true;
 
-  // Auto-step (up to 1.0) onto full blocks, slabs and stairs. Only while
-  // walking on the ground; lower lifts are tried when a door frame or eave
-  // above the step blocks the full lift.
+  // Auto-step (up to 0.6) onto slabs, stairs, etc. Only while walking on the
+  // ground; lower lifts are tried when a door frame or eave above the step
+  // catches the full lift.
   if (!player.flying && player.onGround) {
     player.pos[axis] = startAxis;
     player.pos.y = startY;
@@ -2913,6 +2913,11 @@ function initPlayerController() {
 }
 
 window.addEventListener('keydown', (e) => {
+  // Ctrl/Cmd+S would save the page; intercept it everywhere, including while
+  // typing in the command box. KeyS is deliberately not keyboard-locked so
+  // Windows can still receive Win+Shift+S.
+  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') e.preventDefault();
+
   const tag = (e.target && e.target.tagName) || '';
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
 
