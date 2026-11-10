@@ -61,7 +61,7 @@
   <div class="viewer">
     <canvas id="webgl-canvas"></canvas>
     <div id="crosshair"></div>
-    <div id="lockHint">Click to look around — Esc releases the mouse</div>
+    <div id="lockHint">Click to play — captures mouse and Ctrl+W (Esc releases)</div>
     <div class="hud" id="hud">Build with: /setblock x y z block_id[prop=val,...] • /fill x1 y1 z1 x2 y2 z2 block_id[prop=val,...] • H toggles heightmaps</div>
     <div id="errorOverlay" class="error-overlay"></div>
   </div>
@@ -1950,6 +1950,7 @@ const JUMP_VELOCITY = 0.42;
 const SPRINT_JUMP_BOOST = 0.2;
 const JUMP_COOLDOWN_TICKS = 10;
 const DOUBLE_TAP_TICKS = 7;
+const EYE_SMOOTH_RATE = 18;
 const COLLISION_EPS = 1e-7;
 const PLAYER_MODE_KEY = 'voxelBuilderViewMode';
 const FOV_STORAGE_KEY = 'voxelBuilderFov';
@@ -1968,6 +1969,7 @@ const player = {
   collidedHorizontally: false,
   flying: true,
   sprinting: false,
+  sprintLatch: false,
   sneaking: false,
   jumpCooldown: 0,
   flyToggleTimer: 0,
@@ -1977,12 +1979,13 @@ const player = {
 
 const playerInput = {
   forward: false, back: false, left: false, right: false,
-  jump: false, sneak: false,
+  jump: false, sneak: false, sprint: false,
   forwardEdge: false, jumpEdge: false,
 };
 
 let cameraMode = 'creative';
 let pointerLocked = false;
+let keyboardLockActive = false;
 let physicsAccumulator = 0;
 let hudRefreshTimer = 0;
 
@@ -2195,14 +2198,16 @@ function physicsTick() {
     }
   }
 
-  // Sprint start: double-tap forward (works while flying too, so creative
-  // sprint-flight is reachable without a browser-hostile Ctrl+W binding).
+  // Sprint start: hold Ctrl (or Cmd) or double-tap forward. The double-tap
+  // latches sprint until forward is released; Ctrl stops when released.
   if (playerInput.forwardEdge && playerInput.forward && rawFwd > 0.8) {
     if (player.sprintToggleTimer <= 0) player.sprintToggleTimer = DOUBLE_TAP_TICKS;
-    else { player.sprinting = true; player.sprintToggleTimer = 0; }
+    else { player.sprinting = true; player.sprintLatch = true; player.sprintToggleTimer = 0; }
   }
   playerInput.forwardEdge = false;
-  if (player.sprinting && rawFwd < 0.8) player.sprinting = false;
+  if (playerInput.sprint && rawFwd > 0.8 && !player.sneaking) player.sprinting = true;
+  if (player.sprinting && rawFwd < 0.8) { player.sprinting = false; player.sprintLatch = false; }
+  if (player.sprinting && !playerInput.sprint && !player.sprintLatch) player.sprinting = false;
 
   const wantSneak = sneakHeld && !player.flying;
   if (wantSneak && !player.sneaking) {
@@ -2214,6 +2219,7 @@ function physicsTick() {
       player.height = PLAYER_HEIGHT;
     }
   }
+  if (player.sneaking) { player.sprinting = false; player.sprintLatch = false; }
 
   // Input smoothing: Minecraft multiplies the raw input by 0.98 per tick.
   let fwd = rawFwd * 0.98;
@@ -2279,10 +2285,10 @@ function physicsTick() {
     player.vel.y = 0;
   }
 
-  if (player.sprinting && player.collidedHorizontally) player.sprinting = false;
-
-  const targetEye = player.sneaking ? EYE_HEIGHT_SNEAK : EYE_HEIGHT;
-  player.eyeHeight += (targetEye - player.eyeHeight) * 0.25;
+  if (player.sprinting && player.collidedHorizontally) {
+    player.sprinting = false;
+    player.sprintLatch = false;
+  }
 }
 
 function updatePlayer(delta) {
@@ -2296,6 +2302,10 @@ function updatePlayer(delta) {
   if (steps === 10) physicsAccumulator = 0;
 
   const alpha = Math.min(1, physicsAccumulator / TICK_SECONDS);
+  // Smooth the crouch transition at render rate; doing it per tick made the
+  // camera drop in visible 20 Hz steps.
+  const targetEye = player.sneaking ? EYE_HEIGHT_SNEAK : EYE_HEIGHT;
+  player.eyeHeight += (targetEye - player.eyeHeight) * (1 - Math.exp(-EYE_SMOOTH_RATE * delta));
   _camPos.lerpVectors(player.prevPos, player.pos, alpha);
   camera.position.set(_camPos.x, _camPos.y + player.eyeHeight, _camPos.z);
   camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
@@ -2319,7 +2329,7 @@ function updatePlayer(delta) {
 
 function clearPlayerInput() {
   playerInput.forward = playerInput.back = playerInput.left = playerInput.right = false;
-  playerInput.jump = playerInput.sneak = false;
+  playerInput.jump = playerInput.sneak = playerInput.sprint = false;
   playerInput.forwardEdge = playerInput.jumpEdge = false;
 }
 
@@ -2331,6 +2341,28 @@ function requestPointerLock() {
   } catch (err) { /* pointer lock is optional */ }
 }
 
+/* Ctrl+W is a browser shortcut. The Keyboard Lock API can hand it to the page,
+ * but Chrome only enables it in JS-initiated fullscreen. Both requests are made
+ * synchronously in the click gesture; the key lock follows fullscreen. */
+function disableKeyboardLock() {
+  keyboardLockActive = false;
+  try { navigator.keyboard?.unlock?.(); } catch (err) { /* ignore */ }
+}
+
+function enterImmersiveCapture() {
+  let fullscreenRequest = null;
+  if (navigator.keyboard && typeof navigator.keyboard.lock === 'function' && !document.fullscreenElement) {
+    try { fullscreenRequest = document.documentElement.requestFullscreen(); } catch (err) { /* ignore */ }
+  }
+  requestPointerLock();
+
+  if (!navigator.keyboard || typeof navigator.keyboard.lock !== 'function') return;
+  Promise.resolve(fullscreenRequest)
+    .then(() => navigator.keyboard.lock(['KeyW', 'ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight']))
+    .then(() => { keyboardLockActive = true; })
+    .catch(() => { keyboardLockActive = false; });
+}
+
 function setCameraMode(mode, requestLock = true) {
   if (mode === 'creative' && cameraMode !== 'creative') {
     camera.getWorldDirection(_lookDir);
@@ -2340,6 +2372,9 @@ function setCameraMode(mode, requestLock = true) {
     player.prevPos.copy(player.pos);
     player.vel.set(0, 0, 0);
     player.onGround = false;
+    player.sneaking = false;
+    player.height = PLAYER_HEIGHT;
+    player.eyeHeight = EYE_HEIGHT;
     player.flying = CONFIG.player?.startFlying !== false;
     unstuckPlayer();
   }
@@ -2361,7 +2396,7 @@ function setCameraMode(mode, requestLock = true) {
       btn.classList.add('on'); btn.classList.remove('off');
       btn.setAttribute('aria-pressed', 'true');
     }
-    if (requestLock) requestPointerLock();
+    if (requestLock) enterImmersiveCapture();
   } else {
     document.exitPointerLock?.();
     controls.enabled = true;
@@ -2401,7 +2436,8 @@ function updateHud() {
   hud.textContent =
     `Creative — ${state} — XYZ ${pos}\n` +
     `WASD move • Space ${player.flying ? 'fly up' : 'jump'} • Shift ${player.flying ? 'fly down' : 'sneak'}\n` +
-    `Double-Space toggle flight • double-W sprint • R respawn • Esc release mouse`;
+    `${keyboardLockActive ? 'Ctrl sprint' : 'Ctrl sprint (needs fullscreen)'} • double-W sprint • double-Space flight\n` +
+    `R respawn • Esc release mouse`;
 }
 
 function updateFovUi(fov) {
@@ -2451,6 +2487,10 @@ window.addEventListener('keydown', (e) => {
 
   if (cameraMode !== 'creative') return;
 
+  // With Keyboard Lock active this arrives after the shortcut was captured;
+  // preventDefault is the last line of defence in browsers that deliver it.
+  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyW') e.preventDefault();
+
   switch (e.code) {
     case 'KeyW':
       if (!playerInput.forward && !e.repeat) playerInput.forwardEdge = true;
@@ -2464,6 +2504,9 @@ window.addEventListener('keydown', (e) => {
       playerInput.jump = true; break;
     case 'ShiftLeft': case 'ShiftRight':
       playerInput.sneak = true; break;
+    case 'ControlLeft': case 'ControlRight': case 'MetaLeft': case 'MetaRight':
+      e.preventDefault();
+      playerInput.sprint = true; break;
     case 'KeyR':
       if (!e.repeat) respawnPlayer();
       break;
@@ -2478,6 +2521,7 @@ window.addEventListener('keyup', (e) => {
     case 'KeyD': playerInput.right = false; break;
     case 'Space': playerInput.jump = false; break;
     case 'ShiftLeft': case 'ShiftRight': playerInput.sneak = false; break;
+    case 'ControlLeft': case 'ControlRight': case 'MetaLeft': case 'MetaRight': playerInput.sprint = false; break;
   }
 });
 
@@ -2496,12 +2540,19 @@ document.addEventListener('mousemove', (e) => {
 
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === canvas;
-  if (!pointerLocked) clearPlayerInput();
+  if (!pointerLocked) {
+    clearPlayerInput();
+    disableKeyboardLock();
+  }
   updateLockHint();
 });
 
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) disableKeyboardLock();
+});
+
 canvas.addEventListener('click', () => {
-  if (cameraMode === 'creative') requestPointerLock();
+  if (cameraMode === 'creative') enterImmersiveCapture();
 });
 
 const settingsBtn = document.getElementById('settingsBtn');
