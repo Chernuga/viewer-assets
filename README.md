@@ -98,10 +98,63 @@ small overall brightness lift when heightmaps are on, `heightMapAO` is
 cavity-darkening strength, and `heightMapNormalStrength` scales the
 height-derived normal relief.
 
-Animated textures, translucent blocks, and flat cutout models skip the bevel
-but keep height-derived normals; the toggle removes the whole heightmap shading
-pass. Running the heightmap pipeline needs nothing beyond the existing albedo
-files.
+Animated textures get the same height relief from a single frame (see step 5
+above). Translucent blocks and flat cutout models skip the bevel but keep
+height-derived normals; the toggle removes the whole heightmap shading pass.
+Running the heightmap pipeline needs nothing beyond the existing albedo files.
+
+## Creative movement
+
+The viewer opens in creative first-person mode by default (the last mode is
+remembered in `localStorage`). Click the canvas to capture the mouse (Esc
+releases it), and use **Camera: Orbit** to go back to the orbit view.
+
+| Input | Action |
+| --- | --- |
+| `W` `A` `S` `D` | walk / strafe |
+| `Space` | jump; while flying, fly up |
+| `Shift` | sneak; while flying, fly down |
+| double-tap `Space` | toggle creative flight (landing also cancels it) |
+| double-tap `W` | sprint (also works while flying, for sprint-flight) |
+| `R` | respawn at the centre above the build |
+| `Esc` | release the mouse |
+
+Sprint is double-tap `W` rather than Ctrl because browsers reserve Ctrl+W and
+cannot release it to the page. Movement is simulated at 20 ticks/second with
+render interpolation, using the Java Edition constants:
+
+| Mode | Acceleration | Drag | Terminal speed |
+| --- | --- | --- | --- |
+| walk | 0.098 | 0.546 | 4.317 m/s |
+| sprint | 0.1274 | 0.546 | 5.612 m/s |
+| sneak | 0.0294 | 0.546 | 1.295 m/s |
+| fly | 0.049 | 0.91 | 10.89 m/s |
+| sprint-flight | 0.098 | 0.91 | 21.78 m/s |
+
+Gravity is 0.08 per tick with 0.98 vertical drag (terminal -3.92), jump velocity
+is 0.42 (1.2522 blocks high) with the 0.2 sprint-jump boost, flight has a 0.15
+vertical impulse with 0.6 drag, and the player auto-steps up 0.6 blocks. The
+hitbox is 0.6x1.8 (1.5 when sneaking) with a 1.62 eye height (1.27 sneaking).
+Sneaking backs away from ledges, and the FOV widens while flying and sprinting.
+
+Block collision uses the block model element boxes, so slabs, stairs, fences,
+walls, panes, chests and similar partial blocks have the right shape; plants,
+liquids, torches and rails are non-solid. Full cubes are stored in a Set and
+partial shapes in a Map, both rebuilt with the geometry. Fluid swimming and
+ladder climbing are not implemented yet.
+
+Config (`viewer/config.json` -> `player`):
+
+```json
+"player": {
+  "fov": 70,
+  "mouseSensitivity": 0.5,
+  "startFlying": true
+}
+```
+
+`mouseSensitivity` uses the same 0-1 scale as Minecraft (0.5 = default);
+`startFlying` controls whether `R`/entry starts airborne.
 
 ## Sun and moon
 

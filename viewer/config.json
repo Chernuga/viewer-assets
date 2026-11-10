@@ -68,5 +68,10 @@
     "moonColor": "#8fa3c8",
     "moonIntensity": 0.5,
     "horizonFadeAngle": 0.2
+  },
+  "player": {
+    "fov": 70,
+    "mouseSensitivity": 0.5,
+    "startFlying": true
   }
 }

@@ -18,7 +18,13 @@
     .btn.toggle.off { color: rgba(255,255,255,0.45); border-color: rgba(255,255,255,0.12); }
     .viewer { flex:1; position:relative; }
     #webgl-canvas { display:block; width:100%; height:100%; }
-    .hud { position:absolute; left:12px; bottom:12px; padding:8px 10px; border-radius:10px; background:var(--glass); font-size:12px; backdrop-filter: blur(6px); pointer-events:none; }
+    .hud { position:absolute; left:12px; bottom:12px; padding:8px 10px; border-radius:10px; background:var(--glass); font-size:12px; backdrop-filter: blur(6px); pointer-events:none; white-space:pre-line; line-height:1.5; }
+    #crosshair { position:absolute; left:50%; top:50%; width:20px; height:20px; transform:translate(-50%,-50%); pointer-events:none; display:none; z-index:5; }
+    #crosshair::before, #crosshair::after { content:''; position:absolute; background:#fff; mix-blend-mode:exclusion; box-shadow:0 0 1px rgba(0,0,0,0.35); }
+    #crosshair::before { left:9px; top:0; width:2px; height:20px; }
+    #crosshair::after { left:0; top:9px; width:20px; height:2px; }
+    #lockHint { position:absolute; left:50%; top:62%; transform:translate(-50%,-50%); padding:8px 14px; border-radius:8px; background:rgba(0,0,0,0.55); border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:13px; letter-spacing:0.03em; pointer-events:none; display:none; z-index:6; }
+    body.play #webgl-canvas { cursor:crosshair; }
     .error-overlay { position:absolute; top:10px; right:10px; max-width:400px; max-height:300px; overflow:auto; background:rgba(255,0,0,0.1); border:1px solid rgba(255,0,0,0.3); border-radius:8px; padding:8px; font-size:12px; color:#ff9999; display:none; z-index:20; white-space:pre-wrap; word-break:break-all; }
   </style>
 </head>
@@ -29,12 +35,15 @@
     <div class="controls">
       <button id="renderBtn" class="btn">Build</button>
       <button id="heightmapBtn" class="btn toggle on" aria-pressed="true">Heightmaps: On</button>
+      <button id="cameraBtn" class="btn toggle on" aria-pressed="true" title="Switch between the creative first-person camera and the orbit camera">Camera: Creative</button>
       <button id="refreshShaBtn" class="btn secondary">Refresh SHA</button>
     </div>
   </div>
   <div class="viewer">
     <canvas id="webgl-canvas"></canvas>
-    <div class="hud">Build with: /setblock x y z block_id[prop=val,...] • /fill x1 y1 z1 x2 y2 z2 block_id[prop=val,...] • H toggles heightmaps</div>
+    <div id="crosshair"></div>
+    <div id="lockHint">Click to look around — Esc releases the mouse</div>
+    <div class="hud" id="hud">Build with: /setblock x y z block_id[prop=val,...] • /fill x1 y1 z1 x2 y2 z2 block_id[prop=val,...] • H toggles heightmaps</div>
     <div id="errorOverlay" class="error-overlay"></div>
   </div>
 </div>
@@ -102,6 +111,11 @@ const CONFIG_DEFAULTS = {
     sunColor: '#fff3d6', sunIntensity: 1.2,
     moonColor: '#8fa3c8', moonIntensity: 0.4,
     horizonFadeAngle: 0.2,
+  },
+  player: {
+    fov: 70,
+    mouseSensitivity: 0.5,
+    startFlying: true,
   },
 };
 
@@ -194,6 +208,13 @@ controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIG
 
 const worldGroup = new THREE.Group();
 scene.add(worldGroup);
+
+/* Collision world rebuilt with the geometry: full cubes live in a Set, the
+ * rarer partial shapes (slabs, stairs, fences, plants...) in a Map. */
+const collisionSolids = new Set();
+const collisionPartials = new Map();
+const collisionShapeCache = new WeakMap();
+let worldBounds = null;
 
 const textureCache = new Map();
 const HEIGHTMAP_STORAGE_KEY = 'voxelBuilderHeightMapsEnabled';
@@ -1342,6 +1363,155 @@ function isFlatElement(el) {
   return el.from[0] === el.to[0] || el.from[1] === el.to[1] || el.from[2] === el.to[2];
 }
 
+/* ============================= BLOCK COLLISION SHAPES ============================= */
+
+/* Blocks whose render model has no collision box in Minecraft. Using the model
+ * boxes for these would create invisible walls (flowers, torches, rails). */
+const NO_COLLISION_BLOCKS = new Set([
+  'air', 'cave_air', 'void_air',
+  'water', 'flowing_water', 'lava', 'flowing_lava', 'bubble_column',
+  'fire', 'soul_fire', 'end_portal', 'end_gateway', 'nether_portal',
+  'light', 'structure_void',
+  'short_grass', 'grass', 'tall_grass', 'fern', 'large_fern', 'dead_bush',
+  'seagrass', 'tall_seagrass', 'kelp', 'kelp_plant', 'sea_pickle',
+  'sugar_cane', 'cobweb', 'tripwire', 'redstone_wire',
+  'dandelion', 'poppy', 'blue_orchid', 'allium', 'azure_bluet',
+  'red_tulip', 'orange_tulip', 'white_tulip', 'pink_tulip', 'oxeye_daisy',
+  'cornflower', 'lily_of_the_valley', 'wither_rose', 'torchflower',
+  'sunflower', 'lilac', 'rose_bush', 'peony', 'pitcher_plant',
+  'closed_eyeblossom', 'open_eyeblossom',
+  'brown_mushroom', 'red_mushroom', 'crimson_fungus', 'warped_fungus',
+  'nether_sprouts', 'warped_roots', 'crimson_roots',
+  'mangrove_propagule', 'sweet_berry_bush',
+  'wheat', 'carrots', 'potatoes', 'beetroots', 'nether_wart',
+  'melon_stem', 'pumpkin_stem', 'attached_melon_stem', 'attached_pumpkin_stem',
+  'torchflower_crop', 'pitcher_crop',
+  'vine', 'glow_lichen', 'sculk_vein', 'ladder', 'chain', 'powder_snow',
+  'bamboo_sapling',
+  'cave_vines', 'cave_vines_plant', 'weeping_vines', 'weeping_vines_plant',
+  'twisting_vines', 'twisting_vines_plant', 'hanging_roots',
+]);
+
+/* The models of these have no elements but they still stop the player. */
+const FORCE_SOLID_BLOCKS = new Set(['barrier']);
+
+function isNonSolidBlock(id) {
+  const clean = id.replace('minecraft:', '');
+  if (NO_COLLISION_BLOCKS.has(clean)) return true;
+  if (/(^|_)sapling$/.test(clean)) return true;
+  if (/(^|_)(wall_)?torch$/.test(clean)) return true;
+  if (/(^|_)wall_banner$|(^|_)banner$/.test(clean)) return true;
+  if (/(^|_)rail$/.test(clean)) return true;
+  if (/_coral_(wall_)?fan$/.test(clean)) return true;
+  return false;
+}
+
+const _shapeQBlock = new THREE.Quaternion();
+const _shapeQElement = new THREE.Quaternion();
+const _shapeOrigin = new THREE.Vector3();
+const _shapeHalf = new THREE.Vector3();
+const _shapeOffset = new THREE.Vector3();
+const _shapeV = new THREE.Vector3();
+const _shapeBounds = { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
+
+function elementCollisionBox(el, qBlock, offset) {
+  _shapeQElement.identity();
+  let rotated = false;
+  if (el.rotation) {
+    const axis = el.rotation.axis;
+    const angle = THREE.MathUtils.degToRad(el.rotation.angle || 0);
+    _shapeQElement.setFromAxisAngle(axis === 'x' ? AXIS_X : axis === 'y' ? AXIS_Y : AXIS_Z, angle);
+    _shapeOrigin.set(el.rotation.origin[0] / 16, el.rotation.origin[1] / 16, el.rotation.origin[2] / 16);
+    rotated = true;
+  }
+
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let xi = 0; xi < 2; xi++) {
+    for (let yi = 0; yi < 2; yi++) {
+      for (let zi = 0; zi < 2; zi++) {
+        _shapeV.set(
+          (xi ? el.to[0] : el.from[0]) / 16,
+          (yi ? el.to[1] : el.from[1]) / 16,
+          (zi ? el.to[2] : el.from[2]) / 16);
+        if (rotated) _shapeV.sub(_shapeOrigin).applyQuaternion(_shapeQElement).add(_shapeOrigin);
+        _shapeV.applyQuaternion(qBlock).add(offset);
+        if (_shapeV.x < minX) minX = _shapeV.x;
+        if (_shapeV.y < minY) minY = _shapeV.y;
+        if (_shapeV.z < minZ) minZ = _shapeV.z;
+        if (_shapeV.x > maxX) maxX = _shapeV.x;
+        if (_shapeV.y > maxY) maxY = _shapeV.y;
+        if (_shapeV.z > maxZ) maxZ = _shapeV.z;
+      }
+    }
+  }
+  return { minX, minY, minZ, maxX, maxY, maxZ };
+}
+
+/* Collision shape of one model application, in unit block space. Cached per
+ * model object because every oak_stairs block shares the same element list. */
+function getEntryCollisionShape(entry) {
+  const data = entry.data;
+  if (!data || !data.elements || data.elements.length === 0) return null;
+
+  let perModel = collisionShapeCache.get(data);
+  if (!perModel) { perModel = new Map(); collisionShapeCache.set(data, perModel); }
+  const cacheKey = `${entry.x || 0},${entry.y || 0}`;
+  if (perModel.has(cacheKey)) return perModel.get(cacheKey);
+
+  _shapeQBlock.identity();
+  if (entry.x || entry.y) {
+    _shapeQBlock.setFromEuler(new THREE.Euler(
+      THREE.MathUtils.degToRad(-(entry.x || 0)),
+      THREE.MathUtils.degToRad(-(entry.y || 0)),
+      0, 'XYZ'));
+  }
+  _shapeHalf.set(0.5, 0.5, 0.5).applyQuaternion(_shapeQBlock);
+  _shapeOffset.set(1, 1, 1).sub(_shapeHalf);
+
+  const boxes = [];
+  let full = false;
+  for (const el of data.elements) {
+    if (!el.from || !el.to) continue;
+    const box = elementCollisionBox(el, _shapeQBlock, _shapeOffset);
+    if (box.maxX - box.minX < 1e-6 || box.maxY - box.minY < 1e-6 || box.maxZ - box.minZ < 1e-6) continue;
+    if (box.minX <= 0.5 + 1e-5 && box.minY <= 0.5 + 1e-5 && box.minZ <= 0.5 + 1e-5 &&
+        box.maxX >= 1.5 - 1e-5 && box.maxY >= 1.5 - 1e-5 && box.maxZ >= 1.5 - 1e-5) {
+      full = true;
+      break;
+    }
+    boxes.push(box);
+  }
+  const shape = { full, boxes };
+  perModel.set(cacheKey, shape);
+  return shape;
+}
+
+function getBlockCollisionShape(id, entries) {
+  const clean = id.replace('minecraft:', '');
+  if (FORCE_SOLID_BLOCKS.has(clean)) return { full: true, boxes: [] };
+  if (isNonSolidBlock(clean)) return null;
+
+  const boxes = [];
+  for (const entry of entries) {
+    const shape = getEntryCollisionShape(entry);
+    if (!shape) continue;
+    if (shape.full) return { full: true, boxes: [] };
+    for (const box of shape.boxes) boxes.push(box);
+  }
+  return { full: false, boxes };
+}
+
+function registerBlockCollision(info) {
+  const { id, pos, entries } = info;
+  if (!entries || entries.length === 0) return;
+  const shape = getBlockCollisionShape(id, entries);
+  if (!shape) return;
+  const key = `${pos.x},${pos.y},${pos.z}`;
+  if (shape.full) collisionSolids.add(key);
+  else if (shape.boxes.length) collisionPartials.set(key, shape.boxes);
+}
+
 function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey) {
   const from = el.from;
   const to = el.to;
@@ -1412,6 +1582,8 @@ function entriesAreOpaqueCube(entries) {
 async function collectBlockFaces(info, opaquePositions) {
   const { id, pos, entries } = info;
   if (!entries || entries.length === 0) return;
+
+  registerBlockCollision(info);
 
   const shaderConfig = await getShaderConfigForBlock(id);
   let overrideMaterial = null;
@@ -1561,6 +1733,9 @@ function clearWorld() {
     if (c.geometry) c.geometry.dispose();
   }
   materialBuckets.clear();
+  collisionSolids.clear();
+  collisionPartials.clear();
+  worldBounds = null;
 }
 
 /* ============================= MODEL SELECTION ============================= */
@@ -1642,18 +1817,32 @@ function parseBlockSpec(spec) {
   return [id, props];
 }
 
+function growWorldBounds(x, y, z) {
+  const b = worldBounds;
+  if (!b) return;
+  if (x < b.minX) b.minX = x;
+  if (y < b.minY) b.minY = y;
+  if (z < b.minZ) b.minZ = z;
+  if (x > b.maxX) b.maxX = x;
+  if (y > b.maxY) b.maxY = y;
+  if (z > b.maxZ) b.maxZ = z;
+}
+
 async function build() {
   clearWorld();
   errorOverlay.textContent = ''; errorOverlay.style.display = 'none';
   await loadColormaps();
 
   const placementMap = new Map();
+  worldBounds = { minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity };
   for (const rawLine of document.getElementById('commands').value.split('\n')) {
     const line = rawLine.trim(); if (!line) continue;
     const parts = line.match(/\S+/g) || []; if (parts.length === 0) continue;
     const cmd = parts[0].toLowerCase();
     if (cmd === '/setblock' && parts.length >= 5) {
-      placementMap.set(`${parseFloat(parts[1])},${parseFloat(parts[2])},${parseFloat(parts[3])}`, parts[4].toLowerCase().replace('minecraft:', ''));
+      const bx = parseFloat(parts[1]), by = parseFloat(parts[2]), bz = parseFloat(parts[3]);
+      growWorldBounds(bx, by, bz);
+      placementMap.set(`${bx},${by},${bz}`, parts[4].toLowerCase().replace('minecraft:', ''));
     } else if (cmd === '/fill' && parts.length >= 8) {
       const x1 = Math.min(parseFloat(parts[1]), parseFloat(parts[4]));
       const x2 = Math.max(parseFloat(parts[1]), parseFloat(parts[4]));
@@ -1662,11 +1851,13 @@ async function build() {
       const z1 = Math.min(parseFloat(parts[3]), parseFloat(parts[6]));
       const z2 = Math.max(parseFloat(parts[3]), parseFloat(parts[6]));
       const spec = parts[7].toLowerCase().replace('minecraft:', '');
+      growWorldBounds(x1, y1, z1); growWorldBounds(x2, y2, z2);
       for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) for (let z = z1; z <= z2; z++) {
         placementMap.set(`${x},${y},${z}`, spec);
       }
     }
   }
+  if (!placementMap.size) worldBounds = null;
 
   const concurrency = Math.max(1, CONFIG.render.concurrency || 12);
   const entries = Array.from(placementMap.entries());
@@ -1700,9 +1891,580 @@ async function build() {
   console.log(`Pass 2 (emit): ${infos.length} blocks in ${(t2 - t1).toFixed(0)} ms`);
 
   flushBuckets();
+  updatePlayerSpawnFromWorld();
+  unstuckPlayer();
   const t3 = performance.now();
   console.log(`Build complete: ${placementMap.size} blocks in ${(t3 - t0).toFixed(0)} ms total`);
 }
+
+/* ============================= CREATIVE PLAYER ============================= */
+
+/*
+ * Tick-accurate recreation of Java Edition creative movement:
+ *  - walk accel 0.098, sprint x1.3, sneak x0.3, ground drag 0.546
+ *  - air accel 0.02 / sprint 0.026, air drag 0.91
+ *  - jump 0.42, gravity 0.08, vertical drag 0.98 (terminal -3.92)
+ *  - flight accel 0.05 (x2 sprinting), drag 0.91, vertical impulse 0.15 with 0.6 drag
+ *  - double-tap jump toggles flight, landing while flying disables it
+ *  - 0.6 step height, 0.6x1.8 hitbox (1.5 sneaking), 1.62 eye (1.27 sneaking)
+ * All simulation runs at 20 ticks/second with render interpolation.
+ */
+
+const TICK_SECONDS = 0.05;
+const PLAYER_HALF_WIDTH = 0.3;
+const PLAYER_HEIGHT = 1.8;
+const PLAYER_SNEAK_HEIGHT = 1.5;
+const EYE_HEIGHT = 1.62;
+const EYE_HEIGHT_SNEAK = 1.27;
+const STEP_HEIGHT = 0.6;
+const GRAVITY = 0.08;
+const AIR_DRAG = 0.91;
+const GROUND_DRAG = 0.6 * 0.91;
+const GROUND_ACCEL_FACTOR = 0.16277136 / (GROUND_DRAG * GROUND_DRAG * GROUND_DRAG);
+const WALK_ACCEL = 0.1;
+const SPRINT_ACCEL_MULT = 1.3;
+const SNEAK_ACCEL_MULT = 0.3;
+const FLY_ACCEL = 0.05;
+const FLY_VERTICAL_ACCEL = FLY_ACCEL * 3;
+const FLY_VERTICAL_DRAG = 0.6;
+const JUMP_VELOCITY = 0.42;
+const SPRINT_JUMP_BOOST = 0.2;
+const JUMP_COOLDOWN_TICKS = 10;
+const DOUBLE_TAP_TICKS = 7;
+const COLLISION_EPS = 1e-7;
+const PLAYER_MODE_KEY = 'voxelBuilderViewMode';
+
+const player = {
+  pos: new THREE.Vector3(camera.position.x, camera.position.y - EYE_HEIGHT, camera.position.z),
+  prevPos: new THREE.Vector3(camera.position.x, camera.position.y - EYE_HEIGHT, camera.position.z),
+  spawn: new THREE.Vector3(camera.position.x, camera.position.y - EYE_HEIGHT, camera.position.z),
+  vel: new THREE.Vector3(),
+  yaw: Math.PI / 4,
+  pitch: -Math.PI / 6,
+  height: PLAYER_HEIGHT,
+  eyeHeight: EYE_HEIGHT,
+  onGround: false,
+  yCollided: false,
+  collidedHorizontally: false,
+  flying: true,
+  sprinting: false,
+  sneaking: false,
+  jumpCooldown: 0,
+  flyToggleTimer: 0,
+  sprintToggleTimer: 0,
+  fov: 70,
+};
+
+const playerInput = {
+  forward: false, back: false, left: false, right: false,
+  jump: false, sneak: false,
+  forwardEdge: false, jumpEdge: false,
+};
+
+let cameraMode = 'creative';
+let pointerLocked = false;
+let physicsAccumulator = 0;
+let hudRefreshTimer = 0;
+
+const _camPos = new THREE.Vector3();
+const _lookDir = new THREE.Vector3();
+
+/* ---------------------------- collision queries ---------------------------- */
+
+function playerCollidesAt(x, y, z, height = player.height) {
+  const minX = x - PLAYER_HALF_WIDTH, maxX = x + PLAYER_HALF_WIDTH;
+  const minY = y, maxY = y + height;
+  const minZ = z - PLAYER_HALF_WIDTH, maxZ = z + PLAYER_HALF_WIDTH;
+  // Geometry places a block at integer p in the cell [p+0.5, p+1.5].
+  const x0 = Math.floor(minX - 0.5), x1 = Math.floor(maxX - 0.5 - COLLISION_EPS);
+  const y0 = Math.floor(minY - 0.5), y1 = Math.floor(maxY - 0.5 - COLLISION_EPS);
+  const z0 = Math.floor(minZ - 0.5), z1 = Math.floor(maxZ - 0.5 - COLLISION_EPS);
+
+  for (let bx = x0; bx <= x1; bx++) {
+    for (let by = y0; by <= y1; by++) {
+      for (let bz = z0; bz <= z1; bz++) {
+        const key = bx + ',' + by + ',' + bz;
+        if (collisionSolids.has(key)) return true;
+        const boxes = collisionPartials.get(key);
+        if (!boxes) continue;
+        for (const b of boxes) {
+          if (maxX > bx + b.minX + COLLISION_EPS && minX < bx + b.maxX - COLLISION_EPS &&
+              maxY > by + b.minY + COLLISION_EPS && minY < by + b.maxY - COLLISION_EPS &&
+              maxZ > bz + b.minZ + COLLISION_EPS && minZ < bz + b.maxZ - COLLISION_EPS) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function playerHasSupport(x, y, z) {
+  return playerCollidesAt(x, y - 0.02, z);
+}
+
+/* Move along one axis in <=0.2 block sweeps so terminal velocity cannot tunnel
+ * through a floor, then bisect the last step to rest exactly on the surface. */
+function sweepPlayerAxis(axis, delta) {
+  if (!delta) return false;
+  const steps = Math.max(1, Math.ceil(Math.abs(delta) / 0.2));
+  const step = delta / steps;
+  for (let i = 0; i < steps; i++) {
+    const before = player.pos[axis];
+    player.pos[axis] = before + step;
+    if (!playerCollidesAt(player.pos.x, player.pos.y, player.pos.z)) continue;
+    let lo = 0, hi = step;
+    for (let j = 0; j < 12; j++) {
+      const mid = (lo + hi) * 0.5;
+      player.pos[axis] = before + mid;
+      if (playerCollidesAt(player.pos.x, player.pos.y, player.pos.z)) hi = mid;
+      else lo = mid;
+    }
+    player.pos[axis] = before + lo;
+    return true;
+  }
+  return false;
+}
+
+function movePlayerHorizontal(axis) {
+  const delta = player.vel[axis];
+  if (!delta) return;
+
+  const startAxis = player.pos[axis];
+  const startY = player.pos.y;
+  const hit = sweepPlayerAxis(axis, delta);
+  if (!hit) {
+    // Sneaking backs off ledges instead of walking off them.
+    if (player.sneaking && !player.flying && player.onGround &&
+        !playerHasSupport(player.pos.x, player.pos.y, player.pos.z)) {
+      player.pos[axis] = startAxis;
+      player.vel[axis] = 0;
+    }
+    return;
+  }
+
+  player.collidedHorizontally = true;
+
+  // Auto-step (0.6) onto slabs, stairs, etc. Only while walking on the ground.
+  if (!player.flying && player.onGround) {
+    player.pos[axis] = startAxis;
+    player.pos.y = startY;
+    const raisedY = startY + STEP_HEIGHT;
+    if (!playerCollidesAt(player.pos.x, raisedY, player.pos.z)) {
+      player.pos.y = raisedY;
+      if (!sweepPlayerAxis(axis, delta)) {
+        const landed = sweepPlayerAxis('y', -STEP_HEIGHT);
+        if (landed && player.pos.y >= startY - 1e-6) {
+          player.collidedHorizontally = false;
+          player.onGround = true;
+          return;
+        }
+      }
+    }
+    player.pos[axis] = startAxis;
+    player.pos.y = startY;
+  }
+
+  player.vel[axis] = 0;
+}
+
+function movePlayer() {
+  player.yCollided = false;
+
+  if (player.vel.y !== 0) {
+    if (sweepPlayerAxis('y', player.vel.y)) {
+      player.yCollided = true;
+      player.vel.y = 0;
+      player.onGround = playerHasSupport(player.pos.x, player.pos.y, player.pos.z);
+    } else {
+      player.onGround = false;
+    }
+  } else {
+    player.onGround = playerHasSupport(player.pos.x, player.pos.y, player.pos.z);
+  }
+
+  movePlayerHorizontal('x');
+  movePlayerHorizontal('z');
+
+  if (!player.onGround) {
+    player.onGround = playerHasSupport(player.pos.x, player.pos.y, player.pos.z);
+  }
+}
+
+/* ------------------------------- spawning ------------------------------- */
+
+function computeSpawnPoint() {
+  if (!worldBounds || !isFinite(worldBounds.minX)) {
+    return new THREE.Vector3(0.5, 4.0, 0.5);
+  }
+  const b = worldBounds;
+  const cx = (b.minX + b.maxX) * 0.5 + 1;
+  const cz = (b.minZ + b.maxZ) * 0.5 + 1;
+  // Block p occupies [p+0.5, p+1.5], so the build's top surface is maxY+1.5.
+  const top = b.maxY + 2.5;
+  const flying = CONFIG.player?.startFlying !== false;
+
+  if (!flying) {
+    for (let y = top; y >= b.minY - 2; y -= 0.5) {
+      if (!playerCollidesAt(cx, y, cz, PLAYER_HEIGHT) && playerCollidesAt(cx, y - 0.05, cz, PLAYER_HEIGHT)) {
+        return new THREE.Vector3(cx, y, cz);
+      }
+    }
+  }
+  return new THREE.Vector3(cx, top, cz);
+}
+
+function updatePlayerSpawnFromWorld() {
+  player.spawn.copy(computeSpawnPoint());
+}
+
+function respawnPlayer() {
+  player.pos.copy(player.spawn);
+  player.prevPos.copy(player.spawn);
+  player.vel.set(0, 0, 0);
+  player.onGround = false;
+  player.collidedHorizontally = false;
+  player.sprinting = false;
+  player.sneaking = false;
+  player.height = PLAYER_HEIGHT;
+  player.eyeHeight = EYE_HEIGHT;
+  player.flying = CONFIG.player?.startFlying !== false;
+  player.jumpCooldown = 0;
+  player.flyToggleTimer = 0;
+  player.sprintToggleTimer = 0;
+  clearPlayerInput();
+  updateHud();
+}
+
+function unstuckPlayer() {
+  if (!playerCollidesAt(player.pos.x, player.pos.y, player.pos.z)) return;
+  for (let i = 1; i <= 40; i++) {
+    const y = player.pos.y + i * 0.25;
+    if (!playerCollidesAt(player.pos.x, y, player.pos.z)) {
+      player.pos.y = y;
+      player.prevPos.copy(player.pos);
+      player.vel.set(0, 0, 0);
+      return;
+    }
+  }
+}
+
+/* ------------------------------- simulation ------------------------------- */
+
+function physicsTick() {
+  if (player.jumpCooldown > 0) player.jumpCooldown--;
+  if (player.flyToggleTimer > 0) player.flyToggleTimer--;
+  if (player.sprintToggleTimer > 0) player.sprintToggleTimer--;
+
+  player.prevPos.copy(player.pos);
+
+  const rawFwd = (playerInput.forward ? 1 : 0) - (playerInput.back ? 1 : 0);
+  const rawStrafe = (playerInput.right ? 1 : 0) - (playerInput.left ? 1 : 0);
+  const jumpHeld = playerInput.jump;
+  const sneakHeld = playerInput.sneak;
+
+  if (playerInput.jumpEdge && playerInput.jump) {
+    playerInput.jumpEdge = false;
+    if (player.flyToggleTimer <= 0) {
+      player.flyToggleTimer = DOUBLE_TAP_TICKS;
+    } else {
+      player.flying = !player.flying;
+      player.flyToggleTimer = 0;
+      player.vel.y = 0;
+    }
+  }
+
+  // Sprint start: double-tap forward (works while flying too, so creative
+  // sprint-flight is reachable without a browser-hostile Ctrl+W binding).
+  if (playerInput.forwardEdge && playerInput.forward && rawFwd > 0.8) {
+    if (player.sprintToggleTimer <= 0) player.sprintToggleTimer = DOUBLE_TAP_TICKS;
+    else { player.sprinting = true; player.sprintToggleTimer = 0; }
+  }
+  playerInput.forwardEdge = false;
+  if (player.sprinting && rawFwd < 0.8) player.sprinting = false;
+
+  const wantSneak = sneakHeld && !player.flying;
+  if (wantSneak && !player.sneaking) {
+    player.sneaking = true;
+    player.height = PLAYER_SNEAK_HEIGHT;
+  } else if (!wantSneak && player.sneaking) {
+    if (!playerCollidesAt(player.pos.x, player.pos.y, player.pos.z, PLAYER_HEIGHT)) {
+      player.sneaking = false;
+      player.height = PLAYER_HEIGHT;
+    }
+  }
+
+  // Input smoothing: Minecraft multiplies the raw input by 0.98 per tick.
+  let fwd = rawFwd * 0.98;
+  let strafe = rawStrafe * 0.98;
+
+  let accel, horizontalDrag;
+  if (player.flying) {
+    horizontalDrag = AIR_DRAG;
+    accel = FLY_ACCEL * (player.sprinting ? 2 : 1);
+  } else if (player.onGround) {
+    horizontalDrag = GROUND_DRAG;
+    accel = WALK_ACCEL * (player.sprinting ? SPRINT_ACCEL_MULT : 1) *
+      (player.sneaking ? SNEAK_ACCEL_MULT : 1) * GROUND_ACCEL_FACTOR;
+  } else {
+    horizontalDrag = AIR_DRAG;
+    accel = player.sprinting ? 0.026 : 0.02;
+  }
+
+  if (fwd || strafe) {
+    const inputLength = Math.max(1, Math.hypot(fwd, strafe));
+    const scale = accel / inputLength;
+    const sinYaw = Math.sin(player.yaw), cosYaw = Math.cos(player.yaw);
+    player.vel.x += (-sinYaw * fwd + cosYaw * strafe) * scale;
+    player.vel.z += (-cosYaw * fwd - sinYaw * strafe) * scale;
+  }
+
+  if (!jumpHeld) player.jumpCooldown = 0;
+
+  if (player.flying) {
+    if (jumpHeld) player.vel.y += FLY_VERTICAL_ACCEL;
+    if (sneakHeld) player.vel.y -= FLY_VERTICAL_ACCEL;
+  } else if (jumpHeld && player.onGround && player.jumpCooldown === 0) {
+    player.vel.y = JUMP_VELOCITY;
+    if (player.sprinting) {
+      player.vel.x += -Math.sin(player.yaw) * SPRINT_JUMP_BOOST;
+      player.vel.z += -Math.cos(player.yaw) * SPRINT_JUMP_BOOST;
+    }
+    player.jumpCooldown = JUMP_COOLDOWN_TICKS;
+  }
+
+  const wasFlying = player.flying;
+  const wasOnGround = player.onGround;
+  const preMoveVy = player.vel.y;
+
+  movePlayer();
+
+  if (player.flying) {
+    // The vertical impulse is preserved but heavily damped; gravity does not apply.
+    player.vel.y = player.yCollided ? 0 : preMoveVy * FLY_VERTICAL_DRAG;
+  } else {
+    player.vel.y = (player.vel.y - GRAVITY) * 0.98;
+  }
+  player.vel.x *= horizontalDrag;
+  player.vel.z *= horizontalDrag;
+
+  if (Math.abs(player.vel.x) < 0.005) player.vel.x = 0;
+  if (Math.abs(player.vel.y) < 0.005) player.vel.y = 0;
+  if (Math.abs(player.vel.z) < 0.005) player.vel.z = 0;
+
+  // Creative flight is cancelled when the player descends onto a surface.
+  if (wasFlying && player.flying && !wasOnGround && player.onGround && preMoveVy < 0) {
+    player.flying = false;
+    player.vel.y = 0;
+  }
+
+  if (player.sprinting && player.collidedHorizontally) player.sprinting = false;
+
+  const targetEye = player.sneaking ? EYE_HEIGHT_SNEAK : EYE_HEIGHT;
+  player.eyeHeight += (targetEye - player.eyeHeight) * 0.25;
+}
+
+function updatePlayer(delta) {
+  physicsAccumulator += Math.min(delta, 0.25);
+  let steps = 0;
+  while (physicsAccumulator >= TICK_SECONDS && steps < 10) {
+    physicsTick();
+    physicsAccumulator -= TICK_SECONDS;
+    steps++;
+  }
+  if (steps === 10) physicsAccumulator = 0;
+
+  const alpha = Math.min(1, physicsAccumulator / TICK_SECONDS);
+  _camPos.lerpVectors(player.prevPos, player.pos, alpha);
+  camera.position.set(_camPos.x, _camPos.y + player.eyeHeight, _camPos.z);
+  camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+
+  const baseFov = CONFIG.player?.fov ?? 70;
+  const targetFov = baseFov * (player.flying ? 1.1 : 1) * (player.sprinting ? 1.15 : 1);
+  player.fov += (targetFov - player.fov) * Math.min(1, delta * 12);
+  if (Math.abs(camera.fov - player.fov) > 0.01) {
+    camera.fov = player.fov;
+    camera.updateProjectionMatrix();
+  }
+
+  hudRefreshTimer += delta;
+  if (hudRefreshTimer > 0.1) {
+    hudRefreshTimer = 0;
+    updateHud();
+  }
+}
+
+/* -------------------------------- controls -------------------------------- */
+
+function clearPlayerInput() {
+  playerInput.forward = playerInput.back = playerInput.left = playerInput.right = false;
+  playerInput.jump = playerInput.sneak = false;
+  playerInput.forwardEdge = playerInput.jumpEdge = false;
+}
+
+function requestPointerLock() {
+  if (cameraMode !== 'creative' || pointerLocked) return;
+  try {
+    const p = canvas.requestPointerLock();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch (err) { /* pointer lock is optional */ }
+}
+
+function setCameraMode(mode, requestLock = true) {
+  if (mode === 'creative' && cameraMode !== 'creative') {
+    camera.getWorldDirection(_lookDir);
+    player.pitch = Math.asin(Math.max(-1, Math.min(1, _lookDir.y)));
+    player.yaw = Math.atan2(-_lookDir.x, -_lookDir.z);
+    player.pos.set(camera.position.x, camera.position.y - EYE_HEIGHT, camera.position.z);
+    player.prevPos.copy(player.pos);
+    player.vel.set(0, 0, 0);
+    player.onGround = false;
+    player.flying = CONFIG.player?.startFlying !== false;
+    unstuckPlayer();
+  }
+
+  cameraMode = mode;
+  localStorage.setItem(PLAYER_MODE_KEY, mode);
+  clearPlayerInput();
+  physicsAccumulator = 0;
+
+  const btn = document.getElementById('cameraBtn');
+  const crosshair = document.getElementById('crosshair');
+
+  if (mode === 'creative') {
+    controls.enabled = false;
+    document.body.classList.add('play');
+    if (crosshair) crosshair.style.display = 'block';
+    if (btn) {
+      btn.textContent = 'Camera: Creative';
+      btn.classList.add('on'); btn.classList.remove('off');
+      btn.setAttribute('aria-pressed', 'true');
+    }
+    if (requestLock) requestPointerLock();
+  } else {
+    document.exitPointerLock?.();
+    controls.enabled = true;
+    controls.target.copy(player.pos).add(_lookDir.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw)).multiplyScalar(6));
+    controls.update();
+    document.body.classList.remove('play');
+    if (crosshair) crosshair.style.display = 'none';
+    if (btn) {
+      btn.textContent = 'Camera: Orbit';
+      btn.classList.remove('on'); btn.classList.add('off');
+      btn.setAttribute('aria-pressed', 'false');
+    }
+    const baseFov = CONFIG.player?.fov ?? 70;
+    player.fov = baseFov;
+    camera.fov = baseFov;
+    camera.updateProjectionMatrix();
+  }
+  updateLockHint();
+  updateHud();
+}
+
+function updateLockHint() {
+  const hint = document.getElementById('lockHint');
+  if (!hint) return;
+  hint.style.display = (cameraMode === 'creative' && !pointerLocked) ? 'block' : 'none';
+}
+
+function updateHud() {
+  const hud = document.getElementById('hud');
+  if (!hud) return;
+  if (cameraMode !== 'creative') {
+    hud.textContent = 'Build with: /setblock x y z block_id[prop=val,...] • /fill x1 y1 z1 x2 y2 z2 block_id[prop=val,...] • H toggles heightmaps';
+    return;
+  }
+  const state = player.flying ? 'Flying' : (player.sneaking ? 'Sneaking' : (player.sprinting ? 'Sprinting' : (player.onGround ? 'Walking' : 'Falling')));
+  const pos = `${player.pos.x.toFixed(2)} / ${player.pos.y.toFixed(2)} / ${player.pos.z.toFixed(2)}`;
+  hud.textContent =
+    `Creative — ${state} — XYZ ${pos}\n` +
+    `WASD move • Space ${player.flying ? 'fly up' : 'jump'} • Shift ${player.flying ? 'fly down' : 'sneak'}\n` +
+    `Double-Space toggle flight • double-W sprint • R respawn • Esc release mouse`;
+}
+
+function initPlayerController() {
+  const cfg = CONFIG.player || {};
+  player.fov = cfg.fov ?? 70;
+  camera.fov = player.fov;
+  camera.updateProjectionMatrix();
+
+  // Orient the camera at the build before taking the first-person pose from it.
+  controls.target.set(0, 0, 0);
+  controls.update();
+
+  const saved = localStorage.getItem(PLAYER_MODE_KEY);
+  const mode = saved === 'orbit' ? 'orbit' : 'creative';
+  cameraMode = mode === 'creative' ? 'orbit' : 'creative'; // force the switch path
+  setCameraMode(mode, false);
+}
+
+window.addEventListener('keydown', (e) => {
+  const tag = (e.target && e.target.tagName) || '';
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
+
+  if (e.code === 'KeyH' && !e.repeat) setHeightMapsEnabled(!heightMapsEnabled);
+
+  if (cameraMode !== 'creative') return;
+
+  switch (e.code) {
+    case 'KeyW':
+      if (!playerInput.forward && !e.repeat) playerInput.forwardEdge = true;
+      playerInput.forward = true; break;
+    case 'KeyS': playerInput.back = true; break;
+    case 'KeyA': playerInput.left = true; break;
+    case 'KeyD': playerInput.right = true; break;
+    case 'Space':
+      e.preventDefault();
+      if (!playerInput.jump && !e.repeat) playerInput.jumpEdge = true;
+      playerInput.jump = true; break;
+    case 'ShiftLeft': case 'ShiftRight':
+      playerInput.sneak = true; break;
+    case 'KeyR':
+      if (!e.repeat) respawnPlayer();
+      break;
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  switch (e.code) {
+    case 'KeyW': playerInput.forward = false; break;
+    case 'KeyS': playerInput.back = false; break;
+    case 'KeyA': playerInput.left = false; break;
+    case 'KeyD': playerInput.right = false; break;
+    case 'Space': playerInput.jump = false; break;
+    case 'ShiftLeft': case 'ShiftRight': playerInput.sneak = false; break;
+  }
+});
+
+window.addEventListener('blur', () => clearPlayerInput());
+
+document.addEventListener('mousemove', (e) => {
+  if (!pointerLocked || cameraMode !== 'creative') return;
+  const sensitivity = CONFIG.player?.mouseSensitivity ?? 0.5;
+  const f = sensitivity * 0.6 + 0.2;
+  const degreesPerPixel = f * f * f * 8 * 0.15;
+  player.yaw -= THREE.MathUtils.degToRad(e.movementX * degreesPerPixel);
+  player.pitch -= THREE.MathUtils.degToRad(e.movementY * degreesPerPixel);
+  const limit = Math.PI / 2 - 0.001;
+  player.pitch = Math.max(-limit, Math.min(limit, player.pitch));
+});
+
+document.addEventListener('pointerlockchange', () => {
+  pointerLocked = document.pointerLockElement === canvas;
+  if (!pointerLocked) clearPlayerInput();
+  updateLockHint();
+});
+
+canvas.addEventListener('click', () => {
+  if (cameraMode === 'creative') requestPointerLock();
+});
+
+document.getElementById('cameraBtn').addEventListener('click', () => {
+  if (cameraMode === 'creative') setCameraMode('orbit');
+  else setCameraMode('creative');
+});
 
 /* ============================= ANIMATION ============================= */
 
@@ -1821,7 +2583,7 @@ function updateLighting() {
 
 function animate() {
   requestAnimationFrame(animate);
-  const delta = clock.getDelta();
+  const delta = Math.min(clock.getDelta(), 0.1);
   gameTime += delta * 20 * CONFIG.animation.shaderSpeed;
   for (const { uniformRef } of timeUniforms) uniformRef.value = gameTime;
   for (const tex of animatedTextures) {
@@ -1833,10 +2595,11 @@ function animate() {
       tex.offset.y = 1 - ((data.currentFrame + 1) / data.frameCount);
     }
   }
+  if (cameraMode === 'creative') updatePlayer(delta);
+  else controls.update();
   updateSky(delta);
   updateCelestialBodies(delta);
   updateLighting();
-  controls.update();
   renderer.render(scene, camera);
 }
 
@@ -1871,6 +2634,7 @@ async function forceRefreshSha() {
   console.log('Refreshed asset base:', ASSET_BASE);
   await loadConfig();
   initHeightmapToggle();
+  initPlayerController();
   await setupSky();
   await setupCelestialBodies();
   await setupStars();
@@ -1880,12 +2644,6 @@ async function forceRefreshSha() {
 document.getElementById('renderBtn').addEventListener('click', () => { saveCommandsToStorage(); build(); });
 document.getElementById('heightmapBtn').addEventListener('click', () => { setHeightMapsEnabled(!heightMapsEnabled); });
 document.getElementById('refreshShaBtn').addEventListener('click', () => { forceRefreshSha(); });
-window.addEventListener('keydown', (e) => {
-  if (e.repeat) return;
-  const tag = (e.target && e.target.tagName) || '';
-  if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
-  if (e.key === 'h' || e.key === 'H') setHeightMapsEnabled(!heightMapsEnabled);
-});
 window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 
 (async () => {
@@ -1895,6 +2653,7 @@ window.addEventListener('resize', () => { camera.aspect = window.innerWidth / wi
   console.log('Asset base:', ASSET_BASE);
   await loadConfig();
   initHeightmapToggle();
+  initPlayerController();
   await setupSky();
   await setupCelestialBodies();
   await setupStars();
