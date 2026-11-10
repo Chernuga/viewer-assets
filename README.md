@@ -36,11 +36,9 @@ default comes from `viewer/config.json` -> `render.heightMap`.
    stairs and other non-unit faces. The WebGL canvas renders at up to 3x device
    pixel ratio for the same reason.
 5. Animated textures (vertical frame strips such as lava, magma, sculk,
-   lanterns and command blocks) get the same relief. The height field is built
-   from the first square frame, and the shader folds each frame's V range back
-   onto that single frame (`uHeightFrames`), so every animation frame is shaded
-   with the heightmap. The fold relies on the periodic height edges, so it does
-   not introduce a seam at frame boundaries.
+   lanterns and command blocks) get a separate height field for every frame.
+   The frames are stored left-to-right in one horizontal atlas, and the shader
+   selects the atlas cell matching the current albedo frame (`uHeightFrames`).
 6. Everything is surface shading only. Block geometry is not displaced or
    tessellated; there is no real height.
 
@@ -98,10 +96,13 @@ small overall brightness lift when heightmaps are on, `heightMapAO` is
 cavity-darkening strength, and `heightMapNormalStrength` scales the
 height-derived normal relief.
 
-Animated textures get the same height relief from a single frame (see step 5
-above). Translucent blocks and flat cutout models skip the bevel but keep
-height-derived normals; the toggle removes the whole heightmap shading pass.
-Running the heightmap pipeline needs nothing beyond the existing albedo files.
+Every block surface gets the heightmap, including translucent glass/ice and flat
+cutout plants. Static textures use `heightMapResolution` (256); animated
+textures pack one independent height field per frame into a horizontal atlas at
+128px per frame, and the shader samples the atlas cell for the current frame.
+
+The toggle removes the whole heightmap shading pass. Running the heightmap
+pipeline needs nothing beyond the existing albedo files.
 
 ## Reflections
 
@@ -121,12 +122,13 @@ selected by the `uReflectionMode` uniform; switching modes does not rebuild the
 world or recapture the probe. Animated textures use a full-strip alpha mask whose
 V offset is kept in sync with the albedo frame.
 
-A 128px `CubeCamera` probe renders the scene from the player's eye every 0.35 s
-while reflections are on. Two cube targets ping-pong: the scene is captured into
-one while materials still sample the other, avoiding a WebGL feedback loop now
-that all block materials reflect. The debug grid is hidden during the probe.
-Turning reflections off sets `uReflectionStrength` to zero and stops the
-captures, so there is no world rebuild. The feature is off by default because
+A 128px `CubeCamera` probe renders every 0.35 s while reflections are on. **Blocks
+are excluded from the probe**: `worldGroup` and the debug grid are hidden during
+capture, so only the sky, sun, moon and stars are reflected. Two cube targets
+ping-pong: the sky is captured into one while materials still sample the other,
+avoiding a WebGL feedback loop. Turning reflections off sets
+`uReflectionStrength` to zero and stops the captures, so there is no world
+rebuild. The feature is off by default because
 each capture is six extra scene renders; the config defaults are
 `render.reflections` and `render.reflectionType`.
 

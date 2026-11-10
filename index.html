@@ -800,66 +800,46 @@ function makePeriodic(values, w, h) {
   }
 }
 
-function canvasTextureFromGray(values, w, h, outSize, linear) {
-  const size = Math.max(w, Math.min(512, Math.round(outSize || w)));
+function canvasTextureFromHeightFrames(frames, w, h, frameSize) {
+  const frameCount = frames.length;
   const canvas = document.createElement('canvas');
-  canvas.width = size; canvas.height = size;
+  canvas.width = frameSize * frameCount;
+  canvas.height = frameSize;
   const ctx = canvas.getContext('2d');
-  const img = ctx.createImageData(size, size);
-  // Nearest-neighbour expansion keeps the 16x steps exact while giving the
-  // shader enough texels for a crisp 1-pixel-wide bevel at screen resolution.
-  for (let y = 0; y < size; y++) {
-    const sy = Math.min(h - 1, Math.floor(y * h / size));
-    for (let x = 0; x < size; x++) {
-      const sx = Math.min(w - 1, Math.floor(x * w / size));
-      const v = Math.max(0, Math.min(255, Math.round(values[sy * w + sx] * 255)));
-      const i = (y * size + x) * 4;
-      // RTX convention: R = height, G = B = 0. Non-zero G/B would identify the
-      // file as a normal map instead of a heightmap.
-      img.data[i] = v;
-      img.data[i + 1] = 0;
-      img.data[i + 2] = 0;
-      img.data[i + 3] = 255;
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  // One square per animation frame, left to right. Nearest-neighbour expansion
+  // keeps the 16x steps exact while giving the shader enough texels for a
+  // crisp 1-pixel-wide bevel at screen resolution.
+  for (let f = 0; f < frameCount; f++) {
+    const values = frames[f];
+    for (let y = 0; y < frameSize; y++) {
+      const sy = Math.min(h - 1, Math.floor(y * h / frameSize));
+      for (let x = 0; x < frameSize; x++) {
+        const sx = Math.min(w - 1, Math.floor(x * w / frameSize));
+        const v = Math.max(0, Math.min(255, Math.round(values[sy * w + sx] * 255)));
+        const i = (y * canvas.width + (f * frameSize + x)) * 4;
+        // RTX convention: R = height, G = B = 0. Non-zero G/B would identify
+        // the file as a normal map instead of a heightmap.
+        img.data[i] = v;
+        img.data[i + 1] = 0;
+        img.data[i + 2] = 0;
+        img.data[i + 3] = 255;
+      }
     }
   }
   ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(canvas);
-  tex.magFilter = linear ? THREE.LinearFilter : THREE.NearestFilter;
-  tex.minFilter = linear ? THREE.LinearFilter : THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.NoColorSpace;
-  tex.userData = { size };
+  tex.userData = { size: frameSize, frameSize, frameCount, width: canvas.width, height: canvas.height };
   return tex;
 }
 
-/*
- * Depth inference by whole-image color ranking:
- *   1. collect every unique opaque RGB in the frame;
- *   2. compare all of them against each other, sorted by Rec. 709 luminance;
- *   3. each pixel's depth is its color's rank in that global palette (0..1);
- *   4. apply gamma / optional height levels.
- * No neighbouring pixels are compared: identical colors always get identical
- * depth, and rare colors keep their true rank instead of being averaged away.
- */
-async function buildSurfaceMapsFromUrl(url) {
-  const img = await loadImage(url);
-  const imgW = img.width, imgH = img.height;
-  if (!imgW || !imgH) return null;
-
-  // Animated textures are a vertical strip of square frames. Build the height
-  // field from the first frame; the shader folds every frame's V range back
-  // onto that square (uHeightFrames), so animated blocks get relief too.
-  const frameCount = (imgH > imgW && imgH % imgW === 0) ? imgH / imgW : 1;
-  const w = imgW, h = imgW;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, w, h, 0, 0, w, h);
-  const pixels = ctx.getImageData(0, 0, w, h).data;
-
+function heightFrameFromPixels(pixels, w, h, gamma, levels) {
   const colorLuminance = new Map();
   let transparent = 0;
   for (let i = 0; i < w * h; i++) {
@@ -872,21 +852,23 @@ async function buildSurfaceMapsFromUrl(url) {
     colorLuminance.set(key, 0.2126 * r + 0.7152 * g + 0.0722 * b);
   }
 
-  const opaque = 1 - transparent / (w * h);
-  if (opaque < 0.05) return null;
+  const height = new Float32Array(w * h);
+  if (1 - transparent / (w * h) < 0.05) {
+    height.fill(0.5);
+    return height;
+  }
 
-  // Compare every unique color against every other, by luminance.
   const palette = Array.from(colorLuminance.entries())
     .sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
-  if (palette.length < 2) return null;
+  if (palette.length < 2) {
+    height.fill(0.5);
+    return height;
+  }
 
   const rank = new Map();
   const denom = palette.length - 1;
   for (let i = 0; i < palette.length; i++) rank.set(palette[i][0], i / denom);
 
-  const gamma = Math.max(0.25, CONFIG.render.heightMapGamma ?? 1.0);
-  const levels = Math.max(0, Math.round(CONFIG.render.heightMapLevels || 0));
-  const height = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) {
     if (pixels[i * 4 + 3] < 128) { height[i] = 0; continue; }
     const key = (pixels[i * 4] << 16) | (pixels[i * 4 + 1] << 8) | pixels[i * 4 + 2];
@@ -895,13 +877,46 @@ async function buildSurfaceMapsFromUrl(url) {
     height[i] = v;
   }
   if (CONFIG.render.heightMapSeamless !== false) makePeriodic(height, w, h);
+  return height;
+}
 
-  const heightTexture = canvasTextureFromGray(
-    height, w, h, CONFIG.render.heightMapResolution || 256, false);
+/*
+ * Depth inference by whole-image color ranking, per frame:
+ *   1. collect every unique opaque RGB in the frame;
+ *   2. compare all of them against each other, sorted by Rec. 709 luminance;
+ *   3. each pixel's depth is its color's rank in that global palette (0..1);
+ *   4. apply gamma / optional height levels.
+ * Every animation frame gets its own height field, packed left-to-right into
+ * one atlas texture. No neighbouring pixels are compared when defining depth.
+ */
+async function buildSurfaceMapsFromUrl(url) {
+  const img = await loadImage(url);
+  const imgW = img.width, imgH = img.height;
+  if (!imgW || !imgH) return null;
+
+  const frameCount = (imgH > imgW && imgH % imgW === 0) ? imgH / imgW : 1;
+  const w = imgW, h = imgW;
+  const configRes = CONFIG.render.heightMapResolution || 256;
+  const frameSize = frameCount > 1 ? Math.min(128, configRes) : configRes;
+  const gamma = Math.max(0.25, CONFIG.render.heightMapGamma ?? 1.0);
+  const levels = Math.max(0, Math.round(CONFIG.render.heightMapLevels || 0));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const frames = [];
+  for (let f = 0; f < frameCount; f++) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(img, 0, f * h, w, h, 0, 0, w, h);
+    const pixels = ctx.getImageData(0, 0, w, h).data;
+    frames.push(heightFrameFromPixels(pixels, w, h, gamma, levels));
+  }
+
+  const heightTexture = canvasTextureFromHeightFrames(frames, w, h, frameSize);
 
   return {
-    width: heightTexture.userData.size, height: heightTexture.userData.size,
-    frameCount, heightTexture,
+    width: heightTexture.userData.width, height: heightTexture.userData.height,
+    frameSize, frameCount, heightTexture,
   };
 }
 
@@ -926,7 +941,7 @@ function applySurfaceMapsToMaterial(material, maps, allowHeightRelief) {
   if (data.heightUniforms) {
     data.heightUniforms.uHeightMap.value = maps.heightTexture;
     data.heightUniforms.uHeightMapTexel.value.set(1 / maps.width, 1 / maps.height);
-    data.heightUniforms.uHeightSampleStep.value = Math.max(1, maps.width / 192);
+    data.heightUniforms.uHeightSampleStep.value = Math.max(1, maps.frameSize / 192);
     data.heightUniforms.uHeightFrames.value = maps.frameCount || 1;
     data.heightUniforms.uHeightEnabled.value = (heightMapsEnabled && allowHeightRelief) ? 1 : 0;
   }
@@ -1021,10 +1036,13 @@ mat3 gHeightTBN = mat3(1.0);
       '#include <map_fragment>',
       `#ifdef USE_MAP
   vec2 heightUv = vMapUv;
-  // Animated textures repeat vertically once per frame; the height field is a
-  // single square frame, so fold the current frame's V range back to 0..1.
-  // RepeatWrapping plus a periodic height field keeps the fold seamless.
-  if (uHeightFrames > 1.5) heightUv.y = fract(vMapUv.y * uHeightFrames);
+  // Animated textures are a vertical strip of frames; the height atlas is a
+  // horizontal strip with one independent square per frame.
+  if (uHeightFrames > 1.5) {
+    float n = uHeightFrames;
+    float frameIndex = clamp(n - 1.0 - floor(vMapUv.y * n), 0.0, n - 1.0);
+    heightUv = vec2((frameIndex + vMapUv.x) / n, fract(vMapUv.y * n));
+  }
   gHeightUv = heightUv;
   float heightAO = 1.0;
   float heightEdge = 1.0;
@@ -1451,9 +1469,9 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
     mat.userData.reflectionStrength = reflectionStrength;
   }
 
-  // Animated textures get the same procedural relief; their heightmap covers
-  // one frame and the shader folds the frame V range onto it.
-  const allowHeightRelief = !flat && !translucent;
+  // Every block surface, including cutouts and translucent glass/ice, gets the
+  // same procedural relief from its per-frame height atlas.
+  const allowHeightRelief = true;
   if (texture !== magentaTex) {
     patchHeightMaterial(mat, allowHeightRelief);
     attachSurfaceMaps(mat, texPath, allowHeightRelief);
@@ -2295,6 +2313,32 @@ function movePlayer() {
 
 /* ------------------------------- spawning ------------------------------- */
 
+function findNearestFreePosition(x, y, z, height, requireSupport = false) {
+  const maxRadius = 16;
+  const step = 0.5;
+  const isFree = (px, py, pz) =>
+    !playerCollidesAt(px, py, pz, height) &&
+    (!requireSupport || playerCollidesAt(px, py - 0.02, pz, height));
+
+  if (isFree(x, y, z)) return new THREE.Vector3(x, y, z);
+
+  let best = null;
+  let bestDist = Infinity;
+  for (let dy = -maxRadius; dy <= maxRadius; dy += step) {
+    for (let dx = -maxRadius; dx <= maxRadius; dx += step) {
+      for (let dz = -maxRadius; dz <= maxRadius; dz += step) {
+        const dist = dx * dx + dy * dy + dz * dz;
+        if (dist >= bestDist) continue;
+        const px = x + dx, py = y + dy, pz = z + dz;
+        if (!isFree(px, py, pz)) continue;
+        bestDist = dist;
+        best = new THREE.Vector3(px, py, pz);
+      }
+    }
+  }
+  return best;
+}
+
 function computeSpawnPoint() {
   if (!worldBounds || !isFinite(worldBounds.minX)) {
     return new THREE.Vector3(0.5, 4.0, 0.5);
@@ -2302,18 +2346,11 @@ function computeSpawnPoint() {
   const b = worldBounds;
   const cx = (b.minX + b.maxX) * 0.5 + 1;
   const cz = (b.minZ + b.maxZ) * 0.5 + 1;
-  // Block p occupies [p+0.5, p+1.5], so the build's top surface is maxY+1.5.
-  const top = b.maxY + 2.5;
   const flying = CONFIG.player?.startFlying !== false;
-
-  if (!flying) {
-    for (let y = top; y >= b.minY - 2; y -= 0.5) {
-      if (!playerCollidesAt(cx, y, cz, PLAYER_HEIGHT) && playerCollidesAt(cx, y - 0.05, cz, PLAYER_HEIGHT)) {
-        return new THREE.Vector3(cx, y, cz);
-      }
-    }
-  }
-  return new THREE.Vector3(cx, top, cz);
+  // Flying spawns above the build; grounded spawns stand on the top surface.
+  const candidate = new THREE.Vector3(cx, flying ? b.maxY + 2.5 : b.maxY + 1.5, cz);
+  const safe = findNearestFreePosition(candidate.x, candidate.y, candidate.z, PLAYER_HEIGHT, !flying);
+  return safe || candidate;
 }
 
 function updatePlayerSpawnFromWorld() {
@@ -2339,16 +2376,11 @@ function respawnPlayer() {
 }
 
 function unstuckPlayer() {
-  if (!playerCollidesAt(player.pos.x, player.pos.y, player.pos.z)) return;
-  for (let i = 1; i <= 40; i++) {
-    const y = player.pos.y + i * 0.25;
-    if (!playerCollidesAt(player.pos.x, y, player.pos.z)) {
-      player.pos.y = y;
-      player.prevPos.copy(player.pos);
-      player.vel.set(0, 0, 0);
-      return;
-    }
-  }
+  const safe = findNearestFreePosition(player.pos.x, player.pos.y, player.pos.z, player.height, false);
+  if (!safe) return;
+  player.pos.copy(safe);
+  player.prevPos.copy(player.pos);
+  player.vel.set(0, 0, 0);
 }
 
 /* ------------------------------- simulation ------------------------------- */
@@ -2385,7 +2417,6 @@ function physicsTick() {
   playerInput.forwardEdge = false;
   if (playerInput.sprint && rawFwd > 0.8 && !player.sneaking) player.sprinting = true;
   if (player.sprinting && rawFwd < 0.8) { player.sprinting = false; player.sprintLatch = false; }
-  if (player.sprinting && !playerInput.sprint && !player.sprintLatch) player.sprinting = false;
 
   const wantSneak = sneakHeld && !player.flying;
   if (wantSneak && !player.sneaking) {
@@ -2768,7 +2799,9 @@ document.getElementById('cameraBtn').addEventListener('click', () => {
 
 function captureReflections() {
   const gridWasVisible = gridHelper.visible;
+  const worldWasVisible = worldGroup.visible;
   gridHelper.visible = false;
+  worldGroup.visible = false;
 
   reflectionCamera.renderTarget = reflectionWriteTarget;
   reflectionCamera.position.copy(camera.position);
@@ -2776,6 +2809,7 @@ function captureReflections() {
   reflectionCamera.update(renderer, scene);
 
   gridHelper.visible = gridWasVisible;
+  worldGroup.visible = worldWasVisible;
 
   reflectionTexture = reflectionWriteTarget.texture;
   reflectionWriteTarget = reflectionWriteTarget === reflectionTargetA ? reflectionTargetB : reflectionTargetA;
