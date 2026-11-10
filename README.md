@@ -264,7 +264,8 @@ Right now every face uses alphaTest: 0.5 and DoubleSide. That's wrong for:
 Translucent blocks: water, glass, ice, slime, honey, stained glass. They should use transparent: true with no alphaTest, and ideally sorted for depth.
 
 Cutout-mipless blocks: leaves, saplings, flowers. Leaves are alpha-cutout and
-excluded from opaque face culling, so blocks behind leaf holes stay visible.
+excluded from opaque face culling; they also skip coincident-face deduplication
+so connected canopies keep every internal face.
 
 Entity solid: chests, signs. Should use alphaTest: 0.1 (they don't have transparency).
 

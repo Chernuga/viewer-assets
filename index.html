@@ -1936,6 +1936,9 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
     const face = el.faces[faceName];
     const texPath = resolveTexture(face.texture, modelTextures);
     const material = overrideMaterial || getBlockMaterial(texPath, face.tintindex, translucent, flat);
+    // Translucent and cutout materials must keep every face: adjacent leaves
+    // and glass cells have coincident faces that must not be deduplicated.
+    if (translucent || isCutoutBlock(blockId)) material.userData.noFaceDedup = true;
     const bucket = getBucket(material);
 
     const rawUv = face.uv ? face.uv : getDefaultUV(faceName, from, to);
@@ -2060,6 +2063,7 @@ function dedupeCoincidentFaces() {
   if (!CONFIG.render.dedupeCoincidentFaces) return 0;
   const groups = new Map();
   for (const bucket of materialBuckets.values()) {
+    if (bucket.material.userData.noFaceDedup) continue;
     const matId = bucket.material.uuid;
     for (const face of bucket.faces) {
       if (face.removed) continue;
