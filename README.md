@@ -75,7 +75,7 @@ Config knobs (`viewer/config.json`):
 "render": {
   "heightMap": true,
   "reflections": false,
-  "reflectionStrength": 1.0,
+  "reflectionStrength": 0.5,
   "reflectionType": "normal",
   "heightMapResolution": 256,
   "heightMapLevels": 0,
@@ -98,9 +98,9 @@ cavity-darkening strength, and `heightMapNormalStrength` scales the
 height-derived normal relief.
 
 Every block surface gets the heightmap, including translucent glass/ice and flat
-cutout plants. Static textures use `heightMapResolution` (256); animated
-textures pack one independent height field per frame into a horizontal atlas at
-128px per frame, and the shader samples the atlas cell for the current frame.
+cutout plants. Static textures use `heightMapResolution` (256); animated textures pack one independent height field
+per frame into a row-major atlas at the same 256px per frame, and the shader
+samples the atlas cell for the current frame.
 
 The toggle removes the whole heightmap shading pass. Running the heightmap
 pipeline needs nothing beyond the existing albedo files.
@@ -149,7 +149,7 @@ The FOV slider applies live to both cameras and is stored in `localStorage`
 (`voxelBuilderFov`), overriding `player.fov` from the config on later loads. The
 reflection-strength slider scales all reflective materials and is stored in
 `voxelBuilderReflectionStrength`; `render.reflectionStrength` sets its initial
-value (1.0 = 100%).
+value (0.5 = 50% default).
 
 ## Creative movement
 

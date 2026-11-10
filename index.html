@@ -57,9 +57,9 @@
         <div class="setting">
           <div class="setting-head">
             <label for="reflectionStrengthSlider">Reflection strength</label>
-            <span id="reflectionValue">100%</span>
+            <span id="reflectionValue">50%</span>
           </div>
-          <input id="reflectionStrengthSlider" type="range" min="0" max="100" step="1" value="100" />
+          <input id="reflectionStrengthSlider" type="range" min="0" max="100" step="1" value="50" />
         </div>
         <button id="heightmapBtn" class="btn toggle on" aria-pressed="true">Heightmaps: On</button>
         <button id="cameraBtn" class="btn toggle on" aria-pressed="true" title="Switch between the creative first-person camera and the orbit camera">Camera: Creative</button>
@@ -123,7 +123,7 @@ const CONFIG_DEFAULTS = {
     concurrency: 12,
     heightMap: true,
     reflections: false,
-    reflectionStrength: 1.0,
+    reflectionStrength: 0.5,
     reflectionType: 'normal',
     heightMapResolution: 256,
     heightMapLevels: 0,
@@ -279,7 +279,7 @@ const REFLECTION_MODE_KEY = 'voxelBuilderReflectionMode';
 const DEFAULT_REFLECTION_STRENGTH = 0.2;
 let reflectionMode = 'off';
 let reflectionsEnabled = false;
-let reflectionStrengthScale = 1.0;
+let reflectionStrengthScale = 0.5;
 let reflectionTimer = 0;
 let reflectionDirty = true;
 
@@ -825,22 +825,26 @@ function makePeriodic(values, w, h) {
 
 function canvasTextureFromHeightFrames(frames, w, h, frameSize) {
   const frameCount = frames.length;
+  const cols = Math.ceil(Math.sqrt(frameCount));
+  const rows = Math.ceil(frameCount / cols);
   const canvas = document.createElement('canvas');
-  canvas.width = frameSize * frameCount;
-  canvas.height = frameSize;
+  canvas.width = frameSize * cols;
+  canvas.height = frameSize * rows;
   const ctx = canvas.getContext('2d');
   const img = ctx.createImageData(canvas.width, canvas.height);
-  // One square per animation frame, left to right. Nearest-neighbour expansion
+  // One square per animation frame, row-major. Nearest-neighbour expansion
   // keeps the 16x steps exact while giving the shader enough texels for a
   // crisp 1-pixel-wide bevel at screen resolution.
   for (let f = 0; f < frameCount; f++) {
     const values = frames[f];
+    const col = f % cols;
+    const row = Math.floor(f / cols);
     for (let y = 0; y < frameSize; y++) {
       const sy = Math.min(h - 1, Math.floor(y * h / frameSize));
       for (let x = 0; x < frameSize; x++) {
         const sx = Math.min(w - 1, Math.floor(x * w / frameSize));
         const v = Math.max(0, Math.min(255, Math.round(values[sy * w + sx] * 255)));
-        const i = (y * canvas.width + (f * frameSize + x)) * 4;
+        const i = ((row * frameSize + y) * canvas.width + (col * frameSize + x)) * 4;
         // RTX convention: R = height, G = B = 0. Non-zero G/B would identify
         // the file as a normal map instead of a heightmap.
         img.data[i] = v;
@@ -858,7 +862,7 @@ function canvasTextureFromHeightFrames(frames, w, h, frameSize) {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.NoColorSpace;
-  tex.userData = { size: frameSize, frameSize, frameCount, width: canvas.width, height: canvas.height };
+  tex.userData = { size: frameSize, frameSize, frameCount, cols, rows, width: canvas.width, height: canvas.height };
   return tex;
 }
 
@@ -920,7 +924,7 @@ async function buildSurfaceMapsFromUrl(url) {
   const frameCount = (imgH > imgW && imgH % imgW === 0) ? imgH / imgW : 1;
   const w = imgW, h = imgW;
   const configRes = CONFIG.render.heightMapResolution || 256;
-  const frameSize = frameCount > 1 ? Math.min(128, configRes) : configRes;
+  const frameSize = configRes;
   const gamma = Math.max(0.25, CONFIG.render.heightMapGamma ?? 1.0);
   const levels = Math.max(0, Math.round(CONFIG.render.heightMapLevels || 0));
 
@@ -939,7 +943,8 @@ async function buildSurfaceMapsFromUrl(url) {
 
   return {
     width: heightTexture.userData.width, height: heightTexture.userData.height,
-    frameSize, frameCount, heightTexture,
+    frameSize, frameCount, atlasCols: heightTexture.userData.cols, atlasRows: heightTexture.userData.rows,
+    heightTexture,
   };
 }
 
@@ -966,6 +971,8 @@ function applySurfaceMapsToMaterial(material, maps, allowHeightRelief) {
     data.heightUniforms.uHeightMapTexel.value.set(1 / maps.width, 1 / maps.height);
     data.heightUniforms.uHeightSampleStep.value = Math.max(1, maps.frameSize / 192);
     data.heightUniforms.uHeightFrames.value = maps.frameCount || 1;
+    data.heightUniforms.uHeightAtlasCols.value = maps.atlasCols || 1;
+    data.heightUniforms.uHeightAtlasRows.value = maps.atlasRows || 1;
     data.heightUniforms.uHeightEnabled.value = (heightMapsEnabled && allowHeightRelief) ? 1 : 0;
   }
 }
@@ -997,6 +1004,8 @@ function patchHeightMaterial(material, allowHeightRelief = false) {
     shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 256, 1 / 256) };
     shader.uniforms.uHeightSampleStep = { value: 1.0 };
     shader.uniforms.uHeightFrames = { value: material.userData.heightFrames || 1 };
+    shader.uniforms.uHeightAtlasCols = { value: 1 };
+    shader.uniforms.uHeightAtlasRows = { value: 1 };
     shader.uniforms.uHeightAO = { value: CONFIG.render.heightMapAO ?? 0.12 };
     shader.uniforms.uHeightEdge = { value: CONFIG.render.heightMapEdge ?? 0.45 };
     shader.uniforms.uHeightEdgeThreshold = { value: CONFIG.render.heightMapEdgeThreshold ?? 0.05 };
@@ -1045,6 +1054,8 @@ uniform float uHeightEnabled;
 uniform vec2 uHeightMapTexel;
 uniform float uHeightSampleStep;
 uniform float uHeightFrames;
+uniform float uHeightAtlasCols;
+uniform float uHeightAtlasRows;
 uniform float uHeightAO;
 uniform float uHeightEdge;
 uniform float uHeightEdgeThreshold;
@@ -1070,11 +1081,15 @@ mat3 gHeightTBN = mat3(1.0);
       `#ifdef USE_MAP
   vec2 heightUv = vMapUv;
   // Animated textures are a vertical strip of frames; the height atlas is a
-  // horizontal strip with one independent square per frame.
+  // row-major grid with one independent square per frame.
   if (uHeightFrames > 1.5) {
     float n = uHeightFrames;
     float frameIndex = clamp(n - 1.0 - floor(vMapUv.y * n), 0.0, n - 1.0);
-    heightUv = vec2((frameIndex + vMapUv.x) / n, fract(vMapUv.y * n));
+    float col = mod(frameIndex, uHeightAtlasCols);
+    float row = floor(frameIndex / uHeightAtlasCols);
+    vec2 local = vec2(vMapUv.x, fract(vMapUv.y * n));
+    heightUv = vec2((col + local.x) / uHeightAtlasCols,
+                    1.0 - (row + 1.0 - local.y) / uHeightAtlasRows);
   }
   gHeightUv = heightUv;
   float heightAO = 1.0;
@@ -1227,7 +1242,7 @@ function initReflectionStrength() {
   const saved = parseFloat(localStorage.getItem(REFLECTION_STRENGTH_KEY));
   const percent = Number.isFinite(saved)
     ? saved
-    : (Number.isFinite(CONFIG.render.reflectionStrength) ? CONFIG.render.reflectionStrength * 100 : 100);
+    : (Number.isFinite(CONFIG.render.reflectionStrength) ? CONFIG.render.reflectionStrength * 100 : 50);
   setReflectionStrengthPercent(percent, false);
 }
 
