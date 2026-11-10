@@ -2463,10 +2463,8 @@ function physicsTick() {
     player.vel.y = 0;
   }
 
-  if (player.sprinting && player.collidedHorizontally) {
-    player.sprinting = false;
-    player.sprintLatch = false;
-  }
+  // Horizontal collisions must not cancel sprint: sliding along a wall keeps
+  // the sprint state (and FOV) until forward is released or sneak is held.
 }
 
 function updatePlayer(delta) {
