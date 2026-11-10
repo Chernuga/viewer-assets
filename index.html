@@ -24,8 +24,8 @@
     .setting-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .setting-head label { font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); }
     #fovValue { color:var(--accent); font-family:var(--mono); font-size:11px; }
-    #fovSlider, #reflectionStrengthSlider { width:100%; accent-color:#39ff14; cursor:pointer; }
-    #reflectionValue { color:var(--accent); font-family:var(--mono); font-size:11px; }
+    #fovSlider, #reflectionStrengthSlider, #heightResSlider { width:100%; accent-color:#39ff14; cursor:pointer; }
+    #reflectionValue, #heightResValue { color:var(--accent); font-family:var(--mono); font-size:11px; }
     .viewer { flex:1; position:relative; }
     #webgl-canvas { display:block; width:100%; height:100%; }
     .hud { position:absolute; left:12px; bottom:12px; padding:8px 10px; border-radius:10px; background:var(--glass); font-size:12px; backdrop-filter: blur(6px); pointer-events:none; white-space:pre-line; line-height:1.5; }
@@ -62,6 +62,13 @@
           <input id="reflectionStrengthSlider" type="range" min="0" max="100" step="1" value="50" />
         </div>
         <button id="heightmapBtn" class="btn toggle on" aria-pressed="true">Heightmaps: On</button>
+        <div class="setting">
+          <div class="setting-head">
+            <label for="heightResSlider">Heightmap resolution</label>
+            <span id="heightResValue">4×</span>
+          </div>
+          <input id="heightResSlider" type="range" min="0" max="3" step="1" value="2" />
+        </div>
         <button id="cameraBtn" class="btn toggle on" aria-pressed="true" title="Switch between the creative first-person camera and the orbit camera">Camera: Creative</button>
         <button id="refreshShaBtn" class="btn secondary">Refresh SHA</button>
       </div>
@@ -328,7 +335,11 @@ let worldBounds = null;
 
 const textureCache = new Map();
 const HEIGHTMAP_STORAGE_KEY = 'voxelBuilderHeightMapsEnabled';
+const HEIGHT_RES_STORAGE_KEY = 'voxelBuilderHeightMapResolution';
+const HEIGHT_RES_OPTIONS = [64, 128, 256, 512];
+const HEIGHT_RES_LABELS = ['1×', '2×', '4×', '8×'];
 let heightMapsEnabled = true;
+let heightResRebuildTimer = 0;
 const heightSunDir = { value: new THREE.Vector3(0, 1, 0) };
 const modelCache = new Map();
 const modelPending = new Map();
@@ -948,14 +959,21 @@ async function buildSurfaceMapsFromUrl(url) {
   };
 }
 
+function surfaceMapKey(url) {
+  return `${url}|${CONFIG.render.heightMapResolution || 256}`;
+}
+
 function getSurfaceMaps(url) {
-  if (surfaceMapCache.has(url)) return surfaceMapCache.get(url);
-  if (surfaceMapPending.has(url)) return null;
+  const key = surfaceMapKey(url);
+  if (surfaceMapCache.has(key)) return surfaceMapCache.get(key);
+  if (surfaceMapPending.has(key)) return null;
   const p = buildSurfaceMapsFromUrl(url)
-    .then((maps) => { surfaceMapCache.set(url, maps); return maps; })
+    .then((maps) => { surfaceMapCache.set(key, maps); return maps; })
     .catch((err) => { console.warn(`Surface map failed for ${url}:`, err); return null; })
-    .finally(() => { surfaceMapPending.delete(url); });
-  surfaceMapPending.set(url, p);
+    .finally(() => {
+      if (surfaceMapPending.get(key) === p) surfaceMapPending.delete(key);
+    });
+  surfaceMapPending.set(key, p);
   return null;
 }
 
@@ -994,7 +1012,7 @@ function attachSurfaceMaps(material, texPath, allowHeightRelief) {
   if (ready) {
     applySurfaceMapsToMaterial(material, ready, allowHeightRelief);
   } else {
-    const pending = surfaceMapPending.get(url);
+    const pending = surfaceMapPending.get(surfaceMapKey(url));
     if (pending) pending.then((maps) => applySurfaceMapsToMaterial(material, maps, allowHeightRelief));
   }
 }
@@ -1218,6 +1236,57 @@ function setHeightMapsEnabled(enabled, persist = true) {
     if (u) u.uHeightEnabled.value = (heightMapsEnabled && material.userData.heightRelief) ? 1 : 0;
   }
 }
+
+function heightResolutionIndex(resolution) {
+  const value = Number(resolution) || 256;
+  let best = 0;
+  for (let i = 1; i < HEIGHT_RES_OPTIONS.length; i++) {
+    if (Math.abs(HEIGHT_RES_OPTIONS[i] - value) < Math.abs(HEIGHT_RES_OPTIONS[best] - value)) best = i;
+  }
+  return best;
+}
+
+function updateHeightResUi(index) {
+  const i = Math.max(0, Math.min(HEIGHT_RES_LABELS.length - 1, Math.round(index)));
+  const slider = document.getElementById('heightResSlider');
+  if (slider && Number(slider.value) !== i) slider.value = String(i);
+  const value = document.getElementById('heightResValue');
+  if (value) {
+    value.textContent = HEIGHT_RES_LABELS[i];
+    value.title = `${HEIGHT_RES_OPTIONS[i]}×${HEIGHT_RES_OPTIONS[i]} px per frame`;
+  }
+}
+
+function setHeightMapResolution(index, persist = true, rebuild = true) {
+  const i = Math.max(0, Math.min(HEIGHT_RES_OPTIONS.length - 1, Math.round(index)));
+  const resolution = HEIGHT_RES_OPTIONS[i];
+  const changed = CONFIG.render.heightMapResolution !== resolution;
+  CONFIG.render.heightMapResolution = resolution;
+  if (persist) localStorage.setItem(HEIGHT_RES_STORAGE_KEY, String(resolution));
+  updateHeightResUi(i);
+  if (!rebuild || !changed) return;
+
+  // Height textures depend on this resolution and are cached per URL/resolution.
+  blockMaterialCache.clear();
+  surfaceMapCache.clear();
+  surfaceMapPending.clear();
+  build();
+}
+
+function initHeightMapResolution() {
+  const saved = parseInt(localStorage.getItem(HEIGHT_RES_STORAGE_KEY), 10);
+  const resolution = HEIGHT_RES_OPTIONS.includes(saved)
+    ? saved
+    : (CONFIG.render.heightMapResolution || 256);
+  setHeightMapResolution(heightResolutionIndex(resolution), false, false);
+}
+
+function scheduleHeightMapResolution(index) {
+  updateHeightResUi(index);
+  clearTimeout(heightResRebuildTimer);
+  heightResRebuildTimer = setTimeout(() => setHeightMapResolution(index, true, true), 220);
+}
+
 
 function reflectionModeValue() {
   return reflectionMode === 'normal' ? 2 : (reflectionMode === 'flat' ? 1 : 0);
@@ -2936,6 +3005,10 @@ document.getElementById('reflectionStrengthSlider').addEventListener('input', (e
   setReflectionStrengthPercent(e.target.value, true);
 });
 
+document.getElementById('heightResSlider').addEventListener('input', (e) => {
+  scheduleHeightMapResolution(Number(e.target.value));
+});
+
 document.getElementById('cameraBtn').addEventListener('click', () => {
   setSettingsOpen(false);
   if (cameraMode === 'creative') setCameraMode('orbit');
@@ -3194,6 +3267,7 @@ async function forceRefreshSha() {
   REPO_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}`;
   console.log('Refreshed asset base:', ASSET_BASE);
   await loadConfig();
+  initHeightMapResolution();
   initHeightmapToggle();
   initReflectionStrength();
   initReflectionToggle();
@@ -3216,6 +3290,7 @@ window.addEventListener('resize', () => { camera.aspect = window.innerWidth / wi
   REPO_BASE = `https://raw.githubusercontent.com/${REPO}/${sha}`;
   console.log('Asset base:', ASSET_BASE);
   await loadConfig();
+  initHeightMapResolution();
   initHeightmapToggle();
   initReflectionStrength();
   initReflectionToggle();

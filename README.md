@@ -89,8 +89,11 @@ Config knobs (`viewer/config.json`):
 }
 ```
 
-`heightMapResolution` is the nearest-neighbour heightmap size (256 default,
-512 max), `heightMapLevels` quantizes the height field (0 = off), `heightMapSeamless`
+`heightMapResolution` is the per-frame heightmap size: **1× = 64px, 2× =
+128px, 4× = 256px (default), 8× = 512px**. Animated textures pack one
+independent height field per frame into a row-major atlas at the same size, and
+the shader samples the atlas cell for the current frame. `heightMapLevels`
+quantizes the height field (0 = off), `heightMapSeamless`
 matches opposite texture edges for seamless tiling, `heightMapEdge` /
 `heightMapEdgeThreshold` control the outlined bevel, `heightMapLift` adds a
 small overall brightness lift when heightmaps are on, `heightMapAO` is
@@ -141,15 +144,18 @@ each capture is six extra scene renders; the config defaults are
 
 Only **Build** stays in the header. The **Settings** button below it opens a
 dropdown containing the field-of-view slider (30-110°), the reflection-strength
-slider (0-100%), the heightmap toggle, the reflections mode cycle
-(Off/Normal/Flat), the Creative/Orbit camera switch, and Refresh SHA. Clicking
-outside the menu or pressing Esc closes it.
+slider (0-100%), the heightmap toggle, the heightmap-resolution slider
+(1×/2×/4×/8×), the reflections mode cycle (Off/Normal/Flat), the
+Creative/Orbit camera switch, and Refresh SHA. Clicking outside the menu or
+pressing Esc closes it.
 
 The FOV slider applies live to both cameras and is stored in `localStorage`
 (`voxelBuilderFov`), overriding `player.fov` from the config on later loads. The
 reflection-strength slider scales all reflective materials and is stored in
 `voxelBuilderReflectionStrength`; `render.reflectionStrength` sets its initial
-value (0.5 = 50% default).
+value (0.5 = 50% default). The heightmap-resolution slider rebuilds the world
+with freshly generated height textures and is stored in
+`voxelBuilderHeightMapResolution`.
 
 ## Creative movement
 
