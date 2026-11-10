@@ -17,7 +17,7 @@
     .btn.toggle.on { color: #b8ffb0; border-color: rgba(57, 255, 20, 0.45); background: rgba(57, 255, 20, 0.10); }
     .btn.toggle.off { color: rgba(255,255,255,0.45); border-color: rgba(255,255,255,0.12); }
     #settingsBtn.open { color:#b8ffb0; border-color:rgba(57,255,20,0.45); background:rgba(57,255,20,0.10); }
-    .settings-panel { position:absolute; top:calc(100% + 8px); right:0; width:236px; display:none; flex-direction:column; gap:8px; padding:10px; border-radius:12px; background:rgba(8,18,22,0.97); border:1px solid rgba(57,255,20,0.18); box-shadow:0 18px 50px rgba(0,0,0,0.55); backdrop-filter:blur(10px); z-index:30; }
+    .settings-panel { position:absolute; top:calc(100% + 8px); right:0; width:236px; max-height:calc(100vh - 130px); overflow-y:auto; overscroll-behavior:contain; display:none; flex-direction:column; gap:8px; padding:10px; border-radius:12px; background:rgba(8,18,22,0.97); border:1px solid rgba(57,255,20,0.18); box-shadow:0 18px 50px rgba(0,0,0,0.55); backdrop-filter:blur(10px); z-index:30; }
     .settings-panel.open { display:flex; }
     .settings-panel .btn { width:100%; }
     .setting { display:flex; flex-direction:column; gap:7px; padding:8px; border-radius:8px; background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.05); }
@@ -45,6 +45,7 @@
       <button id="renderBtn" class="btn">Build</button>
       <button id="settingsBtn" class="btn" aria-expanded="false" aria-controls="settingsPanel">Settings</button>
       <div id="settingsPanel" class="settings-panel" aria-hidden="true">
+        <button id="reflectionsBtn" class="btn toggle off" aria-pressed="false">Reflections: Off</button>
         <div class="setting">
           <div class="setting-head">
             <label for="fovSlider">Field of view</label>
@@ -53,7 +54,6 @@
           <input id="fovSlider" type="range" min="30" max="110" step="1" value="70" />
         </div>
         <button id="heightmapBtn" class="btn toggle on" aria-pressed="true">Heightmaps: On</button>
-        <button id="reflectionsBtn" class="btn toggle off" aria-pressed="false">Reflections: Off</button>
         <button id="cameraBtn" class="btn toggle on" aria-pressed="true" title="Switch between the creative first-person camera and the orbit camera">Camera: Creative</button>
         <button id="refreshShaBtn" class="btn secondary">Refresh SHA</button>
       </div>
@@ -237,17 +237,63 @@ scene.add(worldGroup);
  * only changes reflectivity and stops/starts the six-face captures. */
 const REFLECTION_TEXTURE_SIZE = 128;
 const REFLECTION_INTERVAL = 0.35;
-const reflectionTarget = new THREE.WebGLCubeRenderTarget(REFLECTION_TEXTURE_SIZE);
-reflectionTarget.texture.generateMipmaps = false;
-reflectionTarget.texture.minFilter = THREE.LinearFilter;
-reflectionTarget.texture.magFilter = THREE.LinearFilter;
-const reflectionCamera = new THREE.CubeCamera(0.1, 3000, reflectionTarget);
+function createReflectionTarget() {
+  const target = new THREE.WebGLCubeRenderTarget(REFLECTION_TEXTURE_SIZE);
+  target.texture.generateMipmaps = false;
+  target.texture.minFilter = THREE.LinearFilter;
+  target.texture.magFilter = THREE.LinearFilter;
+  return target;
+}
+/* Two cube targets ping-pong: the scene is captured into one while materials
+ * still sample the other, which avoids a WebGL feedback loop now that every
+ * block material reflects. */
+const reflectionTargetA = createReflectionTarget();
+const reflectionTargetB = createReflectionTarget();
+const reflectionCamera = new THREE.CubeCamera(0.1, 3000, reflectionTargetA);
 scene.add(reflectionCamera);
-const reflectionTexture = reflectionTarget.texture;
+let reflectionTexture = reflectionTargetA.texture;
+let reflectionWriteTarget = reflectionTargetB;
 const REFLECTION_STORAGE_KEY = 'voxelBuilderReflectionsEnabled';
+const DEFAULT_REFLECTION_STRENGTH = 0.2;
 let reflectionsEnabled = false;
 let reflectionTimer = 0;
 let reflectionDirty = true;
+
+/* A fully white 1x1 mask for translucent surfaces: the whole side reflects. */
+const fullReflectionMask = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat);
+fullReflectionMask.needsUpdate = true;
+fullReflectionMask.colorSpace = THREE.NoColorSpace;
+
+/* Per-pixel mask made from the albedo alpha channel. Transparent cutout pixels
+ * do not reflect; opaque pixels do. The map is built on the same canvas as the
+ * texture layout, including animated frame strips. */
+function createAlphaMaskTexture(image, frameCount) {
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = img.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3];
+    data[i] = alpha;
+    data[i + 1] = alpha;
+    data[i + 2] = alpha;
+    data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  if (frameCount > 1) tex.repeat.set(1, 1 / frameCount);
+  return tex;
+}
 
 /* Collision world rebuilt with the geometry: full cubes live in a Set, the
  * rarer partial shapes (slabs, stairs, fences, plants...) in a Map. */
@@ -691,11 +737,27 @@ function getTexture(texPath) {
   if (textureCache.has(url)) return textureCache.get(url);
   const tex = new THREE.TextureLoader().load(url, (loadedTex) => {
     const image = loadedTex.image;
-    if (image && image.height > image.width && image.height % image.width === 0) {
-      const frameCount = image.height / image.width;
+    if (!image || !image.width || !image.height) return;
+
+    let frameCount = 1;
+    if (image.height > image.width && image.height % image.width === 0) {
+      frameCount = image.height / image.width;
       loadedTex.repeat.set(1, 1 / frameCount);
-      loadedTex.userData = { frameCount, currentFrame: 0, timer: 0, frameDuration: 0.1 };
+      loadedTex.userData = {
+        ...(loadedTex.userData || {}),
+        frameCount, currentFrame: 0, timer: 0, frameDuration: 0.1,
+      };
       if (!animatedTextures.includes(loadedTex)) animatedTextures.push(loadedTex);
+    }
+
+    try {
+      const mask = createAlphaMaskTexture(image, frameCount);
+      loadedTex.userData = { ...(loadedTex.userData || {}), reflectionMask: mask };
+      for (const mat of blockMaterialCache.values()) {
+        if (mat.map === loadedTex && !mat.transparent) mat.specularMap = mask;
+      }
+    } catch (err) {
+      console.warn('Reflection mask failed for', url, err);
     }
   }, undefined, (err) => { showError(`Texture missing: ${url}`); textureCache.set(url, magentaTex); });
   tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
@@ -1311,15 +1373,16 @@ function isTranslucentBlock(id) {
   return TRANSLUCENT_BLOCKS.has(b) || b.includes('stained_glass');
 }
 
-/* Which albedo textures get a reflective material, and how strong the
- * reflection mix is. Kept deliberately small and glossy. */
+/* How strongly each material class reflects. Every block side reflects; the
+ * per-pixel alpha mask decides which texels are visible enough to reflect, and
+ * these classes only tune the overall strength. */
 const REFLECTIVE_TEXTURES = [
-  { re: /(^|\/)water_(still|flow|overlay)$/, strength: 0.55 },
-  { re: /(^|\/)(ice|blue_ice|frosted_ice|packed_ice)$/, strength: 0.45 },
-  { re: /glass/, strength: 0.34 },
-  { re: /(iron|gold|diamond|emerald|netherite|lapis|redstone|coal|raw_iron|raw_gold|raw_copper)_block$/, strength: 0.3 },
-  { re: /(copper_block|exposed_copper|weathered_copper|oxidized_copper|cut_copper)/, strength: 0.28 },
-  { re: /amethyst_block$/, strength: 0.25 },
+  { re: /(^|\/)water_(still|flow|overlay)$/, strength: 0.68 },
+  { re: /(^|\/)(ice|blue_ice|frosted_ice|packed_ice)$/, strength: 0.6 },
+  { re: /glass/, strength: 0.55 },
+  { re: /(iron|gold|diamond|emerald|netherite|lapis|redstone|coal|raw_iron|raw_gold|raw_copper)_block$/, strength: 0.55 },
+  { re: /(copper_block|exposed_copper|weathered_copper|oxidized_copper|cut_copper)/, strength: 0.5 },
+  { re: /amethyst_block$/, strength: 0.4 },
 ];
 
 function getReflectionStrength(texPath) {
@@ -1327,7 +1390,7 @@ function getReflectionStrength(texPath) {
   for (const rule of REFLECTIVE_TEXTURES) {
     if (rule.re.test(clean)) return rule.strength;
   }
-  return 0;
+  return DEFAULT_REFLECTION_STRENGTH;
 }
 
 function getBlockMaterial(texPath, tintIndex, translucent, flat) {
@@ -1346,8 +1409,12 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
   if (tintIndex !== undefined) mat.color = getTintColor(tintIndex);
 
   const reflectionStrength = getReflectionStrength(texPath);
-  if (reflectionStrength > 0) {
+  if (texture !== magentaTex) {
+    // Translucent faces reflect across the whole side; cutout/opaque faces use
+    // the albedo alpha as the per-pixel reflectivity map.
+    const mask = translucent ? fullReflectionMask : (texture.userData?.reflectionMask || fullReflectionMask);
     mat.envMap = reflectionTexture;
+    mat.specularMap = mask;
     mat.combine = THREE.MixOperation;
     mat.reflectivity = reflectionsEnabled ? reflectionStrength : 0;
     mat.userData.reflective = true;
@@ -2672,22 +2739,21 @@ document.getElementById('cameraBtn').addEventListener('click', () => {
 });
 
 function captureReflections() {
-  const hidden = [];
-  for (const mesh of worldGroup.children) {
-    if (mesh.material && mesh.material.userData && mesh.material.userData.reflective) {
-      mesh.visible = false;
-      hidden.push(mesh);
-    }
-  }
   const gridWasVisible = gridHelper.visible;
   gridHelper.visible = false;
 
+  reflectionCamera.renderTarget = reflectionWriteTarget;
   reflectionCamera.position.copy(camera.position);
   reflectionCamera.updateMatrixWorld(true);
   reflectionCamera.update(renderer, scene);
 
   gridHelper.visible = gridWasVisible;
-  for (const mesh of hidden) mesh.visible = true;
+
+  reflectionTexture = reflectionWriteTarget.texture;
+  reflectionWriteTarget = reflectionWriteTarget === reflectionTargetA ? reflectionTargetB : reflectionTargetA;
+  for (const material of blockMaterialCache.values()) {
+    if (material.userData.reflective) material.envMap = reflectionTexture;
+  }
 }
 
 function updateReflections(delta) {
@@ -2826,6 +2892,7 @@ function animate() {
       data.timer = 0;
       data.currentFrame = (data.currentFrame + 1) % data.frameCount;
       tex.offset.y = 1 - ((data.currentFrame + 1) / data.frameCount);
+      if (data.reflectionMask) data.reflectionMask.offset.y = tex.offset.y;
     }
   }
   if (cameraMode === 'creative') updatePlayer(delta);

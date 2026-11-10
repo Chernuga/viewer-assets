@@ -106,19 +106,25 @@ Running the heightmap pipeline needs nothing beyond the existing albedo files.
 
 ## Reflections
 
-**Reflections: On/Off** in Settings enables real-time cube-map reflections on
-glossy blocks: ice, all glass variants, and metal blocks (iron, gold, diamond,
-emerald, netherite, lapis, redstone, copper and raw ore blocks), plus amethyst.
-Water uses the same rule when a water model with geometry is present. Materials
-use Three.js' Lambert `envMap` path with `MixOperation`, so the reflection follows
-each face normal and blends with the existing heightmap normal.
+**Reflections: On/Off** (first item in Settings) enables real-time cube-map
+reflections on **every block side**. Each material keeps a per-texel reflection
+mask sampled as Three.js' Lambert `specularMap`: the albedo alpha channel is the
+map, so opaque texels reflect and transparent cutout pixels do not. Translucent
+sides (water, ice, glass) use a fully white mask, which reflects the whole side.
+The material class only tunes the overall strength (stone ~0.2, ice/glass/metal
+~0.5-0.7); the per-pixel mask does the pixel-level selection.
+
+Reflections are mixed with `MixOperation`, so they follow each face normal and
+blend with the existing heightmap normal. Animated textures use a full-strip
+alpha mask whose V offset is kept in sync with the albedo frame.
 
 A 128px `CubeCamera` probe renders the scene from the player's eye every 0.35 s
-while the toggle is on; reflective meshes and the debug grid are hidden during
-the probe so they don't reflect themselves. Turning reflections off just sets
-the material `reflectivity` to zero and stops the six-face captures, so there is
-no world rebuild. The feature is off by default because each capture is six
-extra scene renders; the config default is `render.reflections`.
+while the toggle is on. Two cube targets ping-pong: the scene is captured into
+one while materials still sample the other, avoiding a WebGL feedback loop now
+that all block materials reflect. The debug grid is hidden during the probe.
+Turning reflections off sets `reflectivity` to zero and stops the captures, so
+there is no world rebuild. The feature is off by default because each capture is
+six extra scene renders; the config default is `render.reflections`.
 
 ## Settings menu
 
