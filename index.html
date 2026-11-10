@@ -24,7 +24,8 @@
     .setting-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .setting-head label { font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); }
     #fovValue { color:var(--accent); font-family:var(--mono); font-size:11px; }
-    #fovSlider { width:100%; accent-color:#39ff14; cursor:pointer; }
+    #fovSlider, #reflectionStrengthSlider { width:100%; accent-color:#39ff14; cursor:pointer; }
+    #reflectionValue { color:var(--accent); font-family:var(--mono); font-size:11px; }
     .viewer { flex:1; position:relative; }
     #webgl-canvas { display:block; width:100%; height:100%; }
     .hud { position:absolute; left:12px; bottom:12px; padding:8px 10px; border-radius:10px; background:var(--glass); font-size:12px; backdrop-filter: blur(6px); pointer-events:none; white-space:pre-line; line-height:1.5; }
@@ -52,6 +53,13 @@
             <span id="fovValue">70°</span>
           </div>
           <input id="fovSlider" type="range" min="30" max="110" step="1" value="70" />
+        </div>
+        <div class="setting">
+          <div class="setting-head">
+            <label for="reflectionStrengthSlider">Reflection strength</label>
+            <span id="reflectionValue">100%</span>
+          </div>
+          <input id="reflectionStrengthSlider" type="range" min="0" max="100" step="1" value="100" />
         </div>
         <button id="heightmapBtn" class="btn toggle on" aria-pressed="true">Heightmaps: On</button>
         <button id="cameraBtn" class="btn toggle on" aria-pressed="true" title="Switch between the creative first-person camera and the orbit camera">Camera: Creative</button>
@@ -115,6 +123,7 @@ const CONFIG_DEFAULTS = {
     concurrency: 12,
     heightMap: true,
     reflections: false,
+    reflectionStrength: 1.0,
     reflectionType: 'normal',
     heightMapResolution: 256,
     heightMapLevels: 0,
@@ -265,10 +274,12 @@ let celestialWriteTarget = celestialTargetB;
 let celestialTimer = 0;
 let celestialDirty = true;
 const REFLECTION_STORAGE_KEY = 'voxelBuilderReflectionsEnabled';
+const REFLECTION_STRENGTH_KEY = 'voxelBuilderReflectionStrength';
 const REFLECTION_MODE_KEY = 'voxelBuilderReflectionMode';
 const DEFAULT_REFLECTION_STRENGTH = 0.2;
 let reflectionMode = 'off';
 let reflectionsEnabled = false;
+let reflectionStrengthScale = 1.0;
 let reflectionTimer = 0;
 let reflectionDirty = true;
 
@@ -994,12 +1005,14 @@ function patchHeightMaterial(material, allowHeightRelief = false) {
     shader.uniforms.uHeightSun = heightSunDir;
     shader.uniforms.uReflectionMode = { value: reflectionMode === 'normal' ? 2 : (reflectionMode === 'flat' ? 1 : 0) };
     shader.uniforms.uReflectionStrength = {
-      value: reflectionsEnabled ? (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) : 0,
+      value: reflectionsEnabled
+        ? (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) * reflectionStrengthScale
+        : 0,
     };
     shader.uniforms.uCelestialMap = { value: celestialTexture };
     shader.uniforms.uCelestialStrength = {
       value: reflectionsEnabled
-        ? Math.min(1.0, (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) * 2.0)
+        ? Math.min(1.0, (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) * 2.0 * reflectionStrengthScale)
         : 0,
     };
 
@@ -1183,6 +1196,41 @@ function reflectionModeValue() {
   return reflectionMode === 'normal' ? 2 : (reflectionMode === 'flat' ? 1 : 0);
 }
 
+function updateReflectionStrengthUi(percent) {
+  const slider = document.getElementById('reflectionStrengthSlider');
+  if (slider && Number(slider.value) !== percent) slider.value = String(percent);
+  const value = document.getElementById('reflectionValue');
+  if (value) value.textContent = percent + '%';
+}
+
+function setReflectionStrengthPercent(value, persist = true) {
+  const percent = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+  reflectionStrengthScale = percent / 100;
+  CONFIG.render.reflectionStrength = reflectionStrengthScale;
+  if (persist) localStorage.setItem(REFLECTION_STRENGTH_KEY, String(percent));
+  updateReflectionStrengthUi(percent);
+  for (const material of blockMaterialCache.values()) {
+    if (!material.userData.reflective) continue;
+    const base = material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH;
+    material.reflectivity = reflectionsEnabled ? base * reflectionStrengthScale : 0;
+    const u = material.userData.heightUniforms;
+    if (u) {
+      u.uReflectionStrength.value = reflectionsEnabled ? base * reflectionStrengthScale : 0;
+      u.uCelestialStrength.value = reflectionsEnabled
+        ? Math.min(1.0, base * 2.0 * reflectionStrengthScale)
+        : 0;
+    }
+  }
+}
+
+function initReflectionStrength() {
+  const saved = parseFloat(localStorage.getItem(REFLECTION_STRENGTH_KEY));
+  const percent = Number.isFinite(saved)
+    ? saved
+    : (Number.isFinite(CONFIG.render.reflectionStrength) ? CONFIG.render.reflectionStrength * 100 : 100);
+  setReflectionStrengthPercent(percent, false);
+}
+
 function updateReflectionButton() {
   const btn = document.getElementById('reflectionsBtn');
   if (!btn) return;
@@ -1228,14 +1276,15 @@ function setReflectionMode(mode, persist = true) {
   const modeValue = reflectionModeValue();
   for (const material of blockMaterialCache.values()) {
     if (!material.userData.reflective) continue;
-    material.reflectivity = reflectionsEnabled ? material.userData.reflectionStrength : 0;
+    const base = material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH;
+    material.reflectivity = reflectionsEnabled ? base * reflectionStrengthScale : 0;
     const u = material.userData.heightUniforms;
     if (u) {
       u.uReflectionMode.value = modeValue;
-      u.uReflectionStrength.value = reflectionsEnabled ? material.userData.reflectionStrength : 0;
+      u.uReflectionStrength.value = reflectionsEnabled ? base * reflectionStrengthScale : 0;
       u.uCelestialMap.value = celestialTexture;
       u.uCelestialStrength.value = reflectionsEnabled
-        ? Math.min(1.0, (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) * 2.0)
+        ? Math.min(1.0, base * 2.0 * reflectionStrengthScale)
         : 0;
     }
   }
@@ -1493,7 +1542,7 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
     mat.envMap = reflectionTexture;
     mat.specularMap = mask;
     mat.combine = THREE.MixOperation;
-    mat.reflectivity = reflectionsEnabled ? reflectionStrength : 0;
+    mat.reflectivity = reflectionsEnabled ? reflectionStrength * reflectionStrengthScale : 0;
     mat.userData.reflective = true;
     mat.userData.reflectionStrength = reflectionStrength;
   }
@@ -2820,6 +2869,10 @@ document.getElementById('fovSlider').addEventListener('input', (e) => {
   setBaseFov(e.target.value, true);
 });
 
+document.getElementById('reflectionStrengthSlider').addEventListener('input', (e) => {
+  setReflectionStrengthPercent(e.target.value, true);
+});
+
 document.getElementById('cameraBtn').addEventListener('click', () => {
   setSettingsOpen(false);
   if (cameraMode === 'creative') setCameraMode('orbit');
@@ -3079,6 +3132,7 @@ async function forceRefreshSha() {
   console.log('Refreshed asset base:', ASSET_BASE);
   await loadConfig();
   initHeightmapToggle();
+  initReflectionStrength();
   initReflectionToggle();
   initPlayerController();
   await setupSky();
@@ -3100,6 +3154,7 @@ window.addEventListener('resize', () => { camera.aspect = window.innerWidth / wi
   console.log('Asset base:', ASSET_BASE);
   await loadConfig();
   initHeightmapToggle();
+  initReflectionStrength();
   initReflectionToggle();
   initPlayerController();
   await setupSky();

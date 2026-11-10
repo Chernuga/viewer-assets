@@ -75,6 +75,7 @@ Config knobs (`viewer/config.json`):
 "render": {
   "heightMap": true,
   "reflections": false,
+  "reflectionStrength": 1.0,
   "reflectionType": "normal",
   "heightMapResolution": 256,
   "heightMapLevels": 0,
@@ -139,12 +140,16 @@ each capture is six extra scene renders; the config defaults are
 ## Settings menu
 
 Only **Build** stays in the header. The **Settings** button below it opens a
-dropdown containing the field-of-view slider (30-110°), the heightmap toggle,
-the reflections mode cycle (Off/Normal/Flat), the Creative/Orbit camera switch,
-and Refresh SHA. Clicking outside the menu or pressing Esc closes it.
+dropdown containing the field-of-view slider (30-110°), the reflection-strength
+slider (0-100%), the heightmap toggle, the reflections mode cycle
+(Off/Normal/Flat), the Creative/Orbit camera switch, and Refresh SHA. Clicking
+outside the menu or pressing Esc closes it.
 
 The FOV slider applies live to both cameras and is stored in `localStorage`
-(`voxelBuilderFov`), overriding `player.fov` from the config on later loads.
+(`voxelBuilderFov`), overriding `player.fov` from the config on later loads. The
+reflection-strength slider scales all reflective materials and is stored in
+`voxelBuilderReflectionStrength`; `render.reflectionStrength` sets its initial
+value (1.0 = 100%).
 
 ## Creative movement
 

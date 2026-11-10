@@ -49,6 +49,7 @@
     "concurrency": 120,
     "heightMap": true,
     "reflections": false,
+    "reflectionStrength": 1.0,
     "reflectionType": "normal",
     "heightMapGamma": 1.0,
     "heightMapNormalStrength": 2.4,
