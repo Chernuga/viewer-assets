@@ -233,7 +233,8 @@ infinity as you move) and are always visible; depth testing still lets terrain
 occlude them. Additive blending with a luminance alpha removes the black
 texture background without a dark square or edge halo. The sun and moon are
 opposite each other; the moon advances through the eight vanilla phase
-textures once per day.
+textures once per day. In the reflection probe they are hidden whenever their
+center is below the camera horizon; the real sky still draws them normally.
 
 ## TODO
 
@@ -262,7 +263,8 @@ Right now every face uses alphaTest: 0.5 and DoubleSide. That's wrong for:
 
 Translucent blocks: water, glass, ice, slime, honey, stained glass. They should use transparent: true with no alphaTest, and ideally sorted for depth.
 
-Cutout-mipless blocks: leaves, saplings, flowers. Currently look OK but occasionally lose edges.
+Cutout-mipless blocks: leaves, saplings, flowers. Leaves are alpha-cutout and
+excluded from opaque face culling, so blocks behind leaf holes stay visible.
 
 Entity solid: chests, signs. Should use alphaTest: 0.1 (they don't have transparency).
 

@@ -1600,6 +1600,13 @@ function isTranslucentBlock(id) {
   return TRANSLUCENT_BLOCKS.has(b) || b.includes('stained_glass');
 }
 
+/* Leaves are alpha-cutout, not translucent, but they must not count as opaque
+ * for face culling: a solid block behind a leaf block has to keep its face so
+ * it can show through the leaf holes. */
+function isCutoutBlock(id) {
+  return /(^|_)leaves$/.test(id.replace('minecraft:', ''));
+}
+
 /* How strongly each material class reflects. Every block side reflects; the
  * per-pixel alpha mask decides which texels are visible enough to reflect, and
  * these classes only tune the overall strength. */
@@ -2297,7 +2304,7 @@ async function build() {
     const modelEntries = await getBlockModels(id, props, pos);
     blockInfo.set(key, { id, pos, entries: modelEntries });
     if (isFluidBlock(id)) fluidPositions.add(key);
-    if (!SHADER_BLOCK_IDS.has(id) && !isTranslucentBlock(id) && entriesAreOpaqueCube(modelEntries)) {
+    if (!SHADER_BLOCK_IDS.has(id) && !isTranslucentBlock(id) && !isCutoutBlock(id) && entriesAreOpaqueCube(modelEntries)) {
       opaquePositions.add(key);
     }
   });
@@ -3080,6 +3087,8 @@ function captureCelestialReflections() {
   const worldWasVisible = worldGroup.visible;
   const starWasVisible = starContainer ? starContainer.visible : false;
   const skyWasVisible = skyMesh ? skyMesh.visible : false;
+  const sunWasVisible = sunMesh ? sunMesh.visible : false;
+  const moonWasVisible = moonMesh ? moonMesh.visible : false;
   const background = scene.background;
   const clearColor = renderer.getClearColor(new THREE.Color());
   const clearAlpha = renderer.getClearAlpha();
@@ -3088,6 +3097,9 @@ function captureCelestialReflections() {
   worldGroup.visible = false;
   if (starContainer) starContainer.visible = false;
   if (skyMesh) skyMesh.visible = false;
+  // Real-sky sun/moon below the horizon must not appear in reflections.
+  if (sunMesh) sunMesh.visible = sunWasVisible && sunMesh.position.y > camera.position.y + 0.01;
+  if (moonMesh) moonMesh.visible = moonWasVisible && moonMesh.position.y > camera.position.y + 0.01;
   scene.background = null;
   renderer.setClearColor(0x000000, 1);
 
@@ -3100,6 +3112,8 @@ function captureCelestialReflections() {
   worldGroup.visible = worldWasVisible;
   if (starContainer) starContainer.visible = starWasVisible;
   if (skyMesh) skyMesh.visible = skyWasVisible;
+  if (sunMesh) sunMesh.visible = sunWasVisible;
+  if (moonMesh) moonMesh.visible = moonWasVisible;
   scene.background = background;
   renderer.setClearColor(clearColor, clearAlpha);
 
