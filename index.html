@@ -757,13 +757,19 @@ function canvasTextureFromGray(values, w, h, outSize, linear) {
  */
 async function buildSurfaceMapsFromUrl(url) {
   const img = await loadImage(url);
-  const w = img.width, h = img.height;
-  if (!w || !h || h > w) return null;
+  const imgW = img.width, imgH = img.height;
+  if (!imgW || !imgH) return null;
+
+  // Animated textures are a vertical strip of square frames. Build the height
+  // field from the first frame; the shader folds every frame's V range back
+  // onto that square (uHeightFrames), so animated blocks get relief too.
+  const frameCount = (imgH > imgW && imgH % imgW === 0) ? imgH / imgW : 1;
+  const w = imgW, h = imgW;
 
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0);
+  ctx.drawImage(img, 0, 0, w, h, 0, 0, w, h);
   const pixels = ctx.getImageData(0, 0, w, h).data;
 
   const lum = new Float32Array(w * h);
@@ -809,7 +815,7 @@ async function buildSurfaceMapsFromUrl(url) {
 
   return {
     width: heightTexture.userData.size, height: heightTexture.userData.size,
-    heightTexture,
+    frameCount, heightTexture,
   };
 }
 
@@ -828,12 +834,14 @@ function applySurfaceMapsToMaterial(material, maps, allowHeightRelief) {
   if (!maps) return;
   const data = material.userData;
   data.heightTexture = maps.heightTexture;
+  data.heightFrames = maps.frameCount || 1;
   data.heightRelief = allowHeightRelief;
 
   if (data.heightUniforms) {
     data.heightUniforms.uHeightMap.value = maps.heightTexture;
     data.heightUniforms.uHeightMapTexel.value.set(1 / maps.width, 1 / maps.height);
     data.heightUniforms.uHeightSampleStep.value = Math.max(1, maps.width / 192);
+    data.heightUniforms.uHeightFrames.value = maps.frameCount || 1;
     data.heightUniforms.uHeightEnabled.value = (heightMapsEnabled && allowHeightRelief) ? 1 : 0;
   }
 }
@@ -864,6 +872,7 @@ function patchHeightMaterial(material) {
     shader.uniforms.uHeightEnabled = { value: (heightMapsEnabled && !!material.userData.heightTexture) ? 1 : 0 };
     shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 512, 1 / 512) };
     shader.uniforms.uHeightSampleStep = { value: 1.0 };
+    shader.uniforms.uHeightFrames = { value: material.userData.heightFrames || 1 };
     shader.uniforms.uHeightAO = { value: CONFIG.render.heightMapAO ?? 0.12 };
     shader.uniforms.uHeightEdge = { value: CONFIG.render.heightMapEdge ?? 0.45 };
     shader.uniforms.uHeightEdgeThreshold = { value: CONFIG.render.heightMapEdgeThreshold ?? 0.05 };
@@ -897,6 +906,7 @@ uniform sampler2D uHeightMap;
 uniform float uHeightEnabled;
 uniform vec2 uHeightMapTexel;
 uniform float uHeightSampleStep;
+uniform float uHeightFrames;
 uniform float uHeightAO;
 uniform float uHeightEdge;
 uniform float uHeightEdgeThreshold;
@@ -915,7 +925,11 @@ mat3 gHeightTBN = mat3(1.0);
       '#include <map_fragment>',
       `#ifdef USE_MAP
   vec2 heightUv = vMapUv;
-  gHeightUv = vMapUv;
+  // Animated textures repeat vertically once per frame; the height field is a
+  // single square frame, so fold the current frame's V range back to 0..1.
+  // RepeatWrapping plus a periodic height field keeps the fold seamless.
+  if (uHeightFrames > 1.5) heightUv.y = fract(vMapUv.y * uHeightFrames);
+  gHeightUv = heightUv;
   float heightAO = 1.0;
   float heightEdge = 1.0;
   if (uHeightEnabled > 0.5) {
@@ -962,7 +976,7 @@ mat3 gHeightTBN = mat3(1.0);
     float shade = smoothstep(0.0, 0.02, -slope);
     heightEdge = 1.0 + uHeightLift + edgeMask * (lit - shade * 0.75) * uHeightEdge;
   }
-  vec4 sampledDiffuseColor = texture2D( map, heightUv );
+  vec4 sampledDiffuseColor = texture2D( map, vMapUv );
   #ifdef DECODE_VIDEO_TEXTURE
     sampledDiffuseColor = vec4( mix( pow( sampledDiffuseColor.rgb * 0.9478672986 + vec3( 0.0521327014 ), vec3( 2.4 ) ), sampledDiffuseColor.rgb * 0.0773993808, vec3( lessThanEqual( sampledDiffuseColor.rgb, vec3( 0.04045 ) ) ) ), sampledDiffuseColor.w );
   #endif
@@ -980,7 +994,7 @@ mat3 gHeightTBN = mat3(1.0);
 
     material.userData.heightUniforms = shader.uniforms;
   };
-  material.customProgramCacheKey = () => 'procedural-heightmap-v1';
+  material.customProgramCacheKey = () => 'procedural-heightmap-v2';
 }
 
 function updateHeightmapButton() {
@@ -1220,9 +1234,10 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
   });
   if (tintIndex !== undefined) mat.color = getTintColor(tintIndex);
 
-  const isAnimated = !!texture.userData?.frameCount;
+  // Animated textures get the same procedural relief; their heightmap covers
+  // one frame and the shader folds the frame V range onto it.
   const allowHeightRelief = !flat && !translucent;
-  if (!isAnimated && texture !== magentaTex) {
+  if (texture !== magentaTex) {
     if (allowHeightRelief) patchHeightMaterial(mat);
     attachSurfaceMaps(mat, texPath, allowHeightRelief);
   }

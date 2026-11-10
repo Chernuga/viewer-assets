@@ -35,7 +35,13 @@ shading live. The choice is stored in `localStorage`; the default comes from
    seam, and a per-vertex `faceScale` keeps the bevel width constant on slabs,
    stairs and other non-unit faces. The WebGL canvas renders at up to 3x device
    pixel ratio for the same reason.
-5. Everything is surface shading only. Block geometry is not displaced or
+5. Animated textures (vertical frame strips such as lava, magma, sculk,
+   lanterns and command blocks) get the same relief. The height field is built
+   from the first square frame, and the shader folds each frame's V range back
+   onto that single frame (`uHeightFrames`), so every animation frame is shaded
+   with the heightmap. The fold relies on the periodic height edges, so it does
+   not introduce a seam at frame boundaries.
+6. Everything is surface shading only. Block geometry is not displaced or
    tessellated; there is no real height.
 
 ## How RTX / deferred renderers use heightmaps
