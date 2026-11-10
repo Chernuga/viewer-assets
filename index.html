@@ -964,15 +964,20 @@ function applySurfaceMapsToMaterial(material, maps, allowHeightRelief) {
   const data = material.userData;
   data.heightTexture = maps.heightTexture;
   data.heightFrames = maps.frameCount || 1;
+  data.heightMapWidth = maps.width;
+  data.heightMapHeight = maps.height;
+  data.heightSampleStep = Math.max(1, maps.frameSize / 192);
+  data.heightAtlasCols = maps.atlasCols || 1;
+  data.heightAtlasRows = maps.atlasRows || 1;
   data.heightRelief = allowHeightRelief;
 
   if (data.heightUniforms) {
     data.heightUniforms.uHeightMap.value = maps.heightTexture;
     data.heightUniforms.uHeightMapTexel.value.set(1 / maps.width, 1 / maps.height);
-    data.heightUniforms.uHeightSampleStep.value = Math.max(1, maps.frameSize / 192);
-    data.heightUniforms.uHeightFrames.value = maps.frameCount || 1;
-    data.heightUniforms.uHeightAtlasCols.value = maps.atlasCols || 1;
-    data.heightUniforms.uHeightAtlasRows.value = maps.atlasRows || 1;
+    data.heightUniforms.uHeightSampleStep.value = data.heightSampleStep;
+    data.heightUniforms.uHeightFrames.value = data.heightFrames;
+    data.heightUniforms.uHeightAtlasCols.value = data.heightAtlasCols;
+    data.heightUniforms.uHeightAtlasRows.value = data.heightAtlasRows;
     data.heightUniforms.uHeightEnabled.value = (heightMapsEnabled && allowHeightRelief) ? 1 : 0;
   }
 }
@@ -999,13 +1004,20 @@ function attachSurfaceMaps(material, texPath, allowHeightRelief) {
  * toggle is a uniform, so no world rebuild. */
 function patchHeightMaterial(material, allowHeightRelief = false) {
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.uHeightMap = { value: material.userData.heightTexture || flatHeightTexture };
-    shader.uniforms.uHeightEnabled = { value: (heightMapsEnabled && allowHeightRelief && !!material.userData.heightTexture) ? 1 : 0 };
-    shader.uniforms.uHeightMapTexel = { value: new THREE.Vector2(1 / 256, 1 / 256) };
-    shader.uniforms.uHeightSampleStep = { value: 1.0 };
-    shader.uniforms.uHeightFrames = { value: material.userData.heightFrames || 1 };
-    shader.uniforms.uHeightAtlasCols = { value: 1 };
-    shader.uniforms.uHeightAtlasRows = { value: 1 };
+    const data = material.userData;
+    shader.uniforms.uHeightMap = { value: data.heightTexture || flatHeightTexture };
+    shader.uniforms.uHeightEnabled = {
+      value: (heightMapsEnabled && allowHeightRelief && !!data.heightTexture) ? 1 : 0,
+    };
+    shader.uniforms.uHeightMapTexel = {
+      value: new THREE.Vector2(
+        1 / (data.heightMapWidth || 256),
+        1 / (data.heightMapHeight || 256)),
+    };
+    shader.uniforms.uHeightSampleStep = { value: data.heightSampleStep || 1 };
+    shader.uniforms.uHeightFrames = { value: data.heightFrames || 1 };
+    shader.uniforms.uHeightAtlasCols = { value: data.heightAtlasCols || 1 };
+    shader.uniforms.uHeightAtlasRows = { value: data.heightAtlasRows || 1 };
     shader.uniforms.uHeightAO = { value: CONFIG.render.heightMapAO ?? 0.12 };
     shader.uniforms.uHeightEdge = { value: CONFIG.render.heightMapEdge ?? 0.45 };
     shader.uniforms.uHeightEdgeThreshold = { value: CONFIG.render.heightMapEdgeThreshold ?? 0.05 };
