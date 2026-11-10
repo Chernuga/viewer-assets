@@ -2331,7 +2331,7 @@ async function build() {
  *  - jump 0.42, gravity 0.08, vertical drag 0.98 (terminal -3.92)
  *  - flight accel 0.05 (x2 sprinting), drag 0.91, vertical impulse 0.15 with 0.6 drag
  *  - double-tap jump toggles flight, landing while flying disables it
- *  - 0.6 step height, 0.6x1.8 hitbox (1.5 sneaking), 1.62 eye (1.27 sneaking)
+ *  - 1.0 step height (viewer auto-step assist), 0.6x1.8 hitbox (1.5 sneaking), 1.62 eye (1.27 sneaking)
  * All simulation runs at 20 ticks/second with render interpolation.
  */
 
@@ -2341,7 +2341,7 @@ const PLAYER_HEIGHT = 1.8;
 const PLAYER_SNEAK_HEIGHT = 1.5;
 const EYE_HEIGHT = 1.62;
 const EYE_HEIGHT_SNEAK = 1.27;
-const STEP_HEIGHT = 0.6;
+const STEP_HEIGHT = 1.0;
 const GRAVITY = 0.08;
 const AIR_DRAG = 0.91;
 const GROUND_DRAG = 0.6 * 0.91;
@@ -2360,6 +2360,7 @@ const EYE_SMOOTH_RATE = 18;
 const COLLISION_EPS = 1e-7;
 const PLAYER_MODE_KEY = 'voxelBuilderViewMode';
 const FOV_STORAGE_KEY = 'voxelBuilderFov';
+const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
 const player = {
   pos: new THREE.Vector3(camera.position.x, camera.position.y - EYE_HEIGHT, camera.position.z),
@@ -2456,6 +2457,28 @@ function sweepPlayerAxis(axis, delta) {
   return false;
 }
 
+function tryStepUp(axis, delta, startAxis, startY) {
+  // The full lift can clip a door frame, eave or wall block above the step
+  // even when a lower step is clear. Try progressively lower lifts instead of
+  // giving up after the single highest probe.
+  for (let lift = STEP_HEIGHT; lift >= 0.05; lift -= 0.05) {
+    player.pos[axis] = startAxis;
+    player.pos.y = startY + lift;
+    if (playerCollidesAt(player.pos.x, player.pos.y, player.pos.z)) continue;
+    if (!sweepPlayerAxis(axis, delta)) {
+      const landed = sweepPlayerAxis('y', -lift);
+      if (landed && player.pos.y >= startY + 0.01) {
+        player.collidedHorizontally = false;
+        player.onGround = true;
+        return true;
+      }
+    }
+    player.pos[axis] = startAxis;
+    player.pos.y = startY;
+  }
+  return false;
+}
+
 function movePlayerHorizontal(axis) {
   const delta = player.vel[axis];
   if (!delta) return;
@@ -2475,24 +2498,13 @@ function movePlayerHorizontal(axis) {
 
   player.collidedHorizontally = true;
 
-  // Auto-step (0.6) onto slabs, stairs, etc. Only while walking on the ground.
+  // Auto-step (up to 1.0) onto full blocks, slabs and stairs. Only while
+  // walking on the ground; lower lifts are tried when a door frame or eave
+  // above the step blocks the full lift.
   if (!player.flying && player.onGround) {
     player.pos[axis] = startAxis;
     player.pos.y = startY;
-    const raisedY = startY + STEP_HEIGHT;
-    if (!playerCollidesAt(player.pos.x, raisedY, player.pos.z)) {
-      player.pos.y = raisedY;
-      if (!sweepPlayerAxis(axis, delta)) {
-        const landed = sweepPlayerAxis('y', -STEP_HEIGHT);
-        if (landed && player.pos.y >= startY - 1e-6) {
-          player.collidedHorizontally = false;
-          player.onGround = true;
-          return;
-        }
-      }
-    }
-    player.pos[axis] = startAxis;
-    player.pos.y = startY;
+    if (tryStepUp(axis, delta, startAxis, startY)) return;
   }
 
   player.vel[axis] = 0;
@@ -2758,9 +2770,9 @@ function requestPointerLock() {
   } catch (err) { /* pointer lock is optional */ }
 }
 
-/* Ctrl+W is a browser shortcut. The Keyboard Lock API can hand it to the page,
- * but Chrome only enables it in JS-initiated fullscreen. Both requests are made
- * synchronously in the click gesture; the key lock follows fullscreen. */
+/* Ctrl+W/A/D are browser shortcut keys. The Keyboard Lock API can hand them to
+ * the page, but Chrome only enables it in JS-initiated fullscreen. Both requests
+ * are made synchronously in the click gesture; the key lock follows fullscreen. */
 function disableKeyboardLock() {
   keyboardLockActive = false;
   try { navigator.keyboard?.unlock?.(); } catch (err) { /* ignore */ }
@@ -2774,8 +2786,12 @@ function enterImmersiveCapture() {
   requestPointerLock();
 
   if (!navigator.keyboard || typeof navigator.keyboard.lock !== 'function') return;
+  const lockKeys = ['KeyW', 'KeyA', 'KeyD', 'ControlLeft', 'ControlRight'];
+  // Windows screenshots (Win+Shift+S) need the Meta key left to the OS. Cmd
+  // sprinting only matters on macOS, where Meta is part of the game controls.
+  if (IS_MAC) lockKeys.push('MetaLeft', 'MetaRight');
   Promise.resolve(fullscreenRequest)
-    .then(() => navigator.keyboard.lock(['KeyW', 'KeyD', 'ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight']))
+    .then(() => navigator.keyboard.lock(lockKeys))
     .then(() => { keyboardLockActive = true; })
     .catch(() => { keyboardLockActive = false; });
 }
@@ -2906,7 +2922,7 @@ window.addEventListener('keydown', (e) => {
 
   // With Keyboard Lock active this arrives after the shortcut was captured;
   // preventDefault is the last line of defence in browsers that deliver it.
-  if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyW' || e.code === 'KeyD')) e.preventDefault();
+  if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyD')) e.preventDefault();
 
   switch (e.code) {
     case 'KeyW':
@@ -2921,9 +2937,15 @@ window.addEventListener('keydown', (e) => {
       playerInput.jump = true; break;
     case 'ShiftLeft': case 'ShiftRight':
       playerInput.sneak = true; break;
-    case 'ControlLeft': case 'ControlRight': case 'MetaLeft': case 'MetaRight':
+    case 'ControlLeft': case 'ControlRight':
       e.preventDefault();
       playerInput.sprint = true; break;
+    case 'MetaLeft': case 'MetaRight':
+      if (IS_MAC) {
+        e.preventDefault();
+        playerInput.sprint = true;
+      }
+      break;
     case 'KeyR':
       if (!e.repeat) respawnPlayer();
       break;
@@ -2938,7 +2960,10 @@ window.addEventListener('keyup', (e) => {
     case 'KeyD': playerInput.right = false; break;
     case 'Space': playerInput.jump = false; break;
     case 'ShiftLeft': case 'ShiftRight': playerInput.sneak = false; break;
-    case 'ControlLeft': case 'ControlRight': case 'MetaLeft': case 'MetaRight': playerInput.sprint = false; break;
+    case 'ControlLeft': case 'ControlRight': playerInput.sprint = false; break;
+    case 'MetaLeft': case 'MetaRight':
+      if (IS_MAC) playerInput.sprint = false;
+      break;
   }
 });
 
