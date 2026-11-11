@@ -2102,6 +2102,13 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
     // Blockstate uvlock keeps textures aligned to the world when the model is
     // rotated. Vanilla applies this per face, not as one global spin.
     if (uvLock && (rotX || rotY)) quadUVs = applyUvLock(quadUVs, faceName, q);
+    // Vanilla's x=180 + y=90/270 top-half stairs need the horizontal face UVs
+    // turned a further 180 degrees; without this the top grain flips on
+    // east/west-facing top stairs.
+    if (uvLock && rotX === 180 && (rotY === 0 || rotY === 180)
+        && (faceName === 'up' || faceName === 'down')) {
+      quadUVs = quadUVs.map(([u, v]) => [1 - u, 1 - v]);
+    }
 
     const def = FACE_DEFS[faceName];
     const c = def.corners(f, t);
