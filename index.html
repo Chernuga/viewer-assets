@@ -2064,7 +2064,7 @@ function applyUvLock(quadUVs, faceName, q) {
   });
 }
 
-function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey, uvLock = false, rotX = 0, rotY = 0, facing = null) {
+function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey, uvLock = false, rotX = 0, rotY = 0) {
   const from = el.from;
   const to = el.to;
   const f = [from[0] / 16, from[1] / 16, from[2] / 16];
@@ -2113,21 +2113,15 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
 
     // Blockstate uvlock keeps textures aligned to the world when the model is
     // rotated. Vanilla applies this per face, not as one global spin.
-    const stairFacing = facing
-      || ({ 0: 'east', 90: 'south', 180: 'west', 270: 'north' })[rotY];
-    // Stairs use the same horizontal plank grain on every facing: north=up,
-    // south=down, east=right, west=left. Build that basis explicitly because
-    // the vanilla east variant is the unrotated model without uvlock, while
-    // the other variants use uvlock and otherwise end up world-aligned.
-    if ((faceName === 'up' || faceName === 'down') && /_stairs$/.test(blockId) && stairFacing) {
-      const base = faceName === 'up'
-        ? [[u1, v2], [u2, v2], [u2, v1], [u1, v1]]
-        : [[u1, v1], [u2, v1], [u2, v2], [u1, v2]];
-      const turns = ({ north: 0, east: 1, south: 2, west: 3 })[stairFacing] ?? 0;
-      quadUVs = base;
-      for (let i = 0; i < turns; i++) quadUVs = quadUVs.map(([u, v]) => [1 - v, u]);
-    } else if (uvLock && (rotX || rotY)) {
-      quadUVs = applyUvLock(quadUVs, faceName, q);
+    if (uvLock && (rotX || rotY)) {
+      if (faceName === 'up' || faceName === 'down') {
+        // Minecraft's default top/bottom UV basis is rotated 90 degrees
+        // relative to the side-face basis; keep the texture attached to the
+        // stair but remove that quarter-turn offset.
+        quadUVs = quadUVs.map(([u, v]) => [1 - v, u]);
+      } else {
+        quadUVs = applyUvLock(quadUVs, faceName, q);
+      }
     }
 
     const def = FACE_DEFS[faceName];
@@ -2242,7 +2236,7 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
           }
         }
       }
-      collectElementFaces(el, data.textures || {}, id, q, offset, skipFaces, overrideMaterial, translucent, blockKey, entry.uvlock, rotX, rotY, properties?.facing);
+      collectElementFaces(el, data.textures || {}, id, q, offset, skipFaces, overrideMaterial, translucent, blockKey, entry.uvlock, rotX, rotY);
     }
   }
 }
