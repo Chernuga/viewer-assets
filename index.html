@@ -1955,7 +1955,7 @@ function getEntryCollisionShape(entry) {
     _shapeQBlock.setFromEuler(new THREE.Euler(
       THREE.MathUtils.degToRad(-(entry.x || 0)),
       THREE.MathUtils.degToRad(-(entry.y || 0)),
-      0, 'XYZ'));
+      0, 'YXZ'));
   }
   _shapeHalf.set(0.5, 0.5, 0.5).applyQuaternion(_shapeQBlock);
   _shapeOffset.set(1, 1, 1).sub(_shapeHalf);
@@ -2003,6 +2003,46 @@ function registerBlockCollision(info) {
   else if (shape.boxes.length) collisionPartials.set(key, shape.boxes);
 }
 
+const UVLOCK_BASIS = {
+  north: { u: [-1, 0, 0], v: [0, 1, 0], n: [0, 0, -1] },
+  south: { u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] },
+  east: { u: [0, 0, -1], v: [0, 1, 0], n: [1, 0, 0] },
+  west: { u: [0, 0, 1], v: [0, 1, 0], n: [-1, 0, 0] },
+  up: { u: [1, 0, 0], v: [0, 0, -1], n: [0, 1, 0] },
+  down: { u: [1, 0, 0], v: [0, 0, 1], n: [0, -1, 0] },
+};
+
+function uvFaceFromNormal(n) {
+  const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+  if (ax >= ay && ax >= az) return n.x >= 0 ? 'east' : 'west';
+  if (ay >= ax && ay >= az) return n.y >= 0 ? 'up' : 'down';
+  return n.z >= 0 ? 'south' : 'north';
+}
+
+/* Vanilla FaceBakery uv-lock: map the face basis through the block rotation,
+ * invert it about (0.5, 0.5), and express the result in the source face's
+ * basis. This is not a single rotation angle for every face. */
+function applyUvLock(quadUVs, faceName, q) {
+  const source = UVLOCK_BASIS[faceName];
+  if (!source) return quadUVs;
+  const rotatedNormal = new THREE.Vector3(...source.n).applyQuaternion(q);
+  const target = UVLOCK_BASIS[uvFaceFromNormal(rotatedNormal)];
+  if (!target) return quadUVs;
+  const inv = q.clone().invert();
+  const u2 = new THREE.Vector3(...target.u);
+  const v2 = new THREE.Vector3(...target.v);
+  const uA = new THREE.Vector3(...source.u);
+  const vA = new THREE.Vector3(...source.v);
+  return quadUVs.map(([u, v]) => {
+    const vv = 1 - v;
+    const p = new THREE.Vector3()
+      .addScaledVector(u2, u - 0.5)
+      .addScaledVector(v2, vv - 0.5)
+      .applyQuaternion(inv);
+    return [p.dot(uA) + 0.5, 1 - (p.dot(vA) + 0.5)];
+  });
+}
+
 function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey, uvLock = false, rotX = 0, rotY = 0) {
   const from = el.from;
   const to = el.to;
@@ -2044,15 +2084,8 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
     for (let i = 0; i < rot / 90; i++) quadUVs.push(quadUVs.shift());
 
     // Blockstate uvlock keeps textures aligned to the world when the model is
-    // rotated. Without it, stairs and other rotated models show sideways UVs.
-    if (uvLock && (rotX || rotY)) {
-      const angle = THREE.MathUtils.degToRad(rotX + rotY);
-      const cos = Math.cos(angle), sin = Math.sin(angle);
-      quadUVs = quadUVs.map(([u, v]) => {
-        const x = u - 0.5, y = v - 0.5;
-        return [0.5 + x * cos - y * sin, 0.5 + x * sin + y * cos];
-      });
-    }
+    // rotated. Vanilla applies this per face, not as one global spin.
+    if (uvLock && (rotX || rotY)) quadUVs = applyUvLock(quadUVs, faceName, q);
 
     const def = FACE_DEFS[faceName];
     const c = def.corners(f, t);
@@ -2143,7 +2176,7 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
       q.setFromEuler(new THREE.Euler(
         THREE.MathUtils.degToRad(-rotX),
         THREE.MathUtils.degToRad(-rotY),
-        0, 'XYZ'));
+        0, 'YXZ'));
     }
     const half = new THREE.Vector3(0.5, 0.5, 0.5).applyQuaternion(q);
     const offset = new THREE.Vector3(pos.x + 1, pos.y + 1, pos.z + 1).sub(half);
@@ -2843,6 +2876,10 @@ function physicsTick() {
   const inLava = bodyIds.some(id => id === 'lava') || bodyPropsList.some(p => p.class === 'LiquidBlock' && p.light === 15);
   const inPowder = bodyPropsList.some(p => p.class === 'PowderSnowBlock');
   const climbable = bodyPropsList.some(p => p.climbable);
+  const speedCandidates = [supportProps, ...bodyPropsList]
+    .filter(p => p && p.class !== 'AirBlock')
+    .map(p => p.speed);
+  const speedMul = speedCandidates.length ? Math.min(...speedCandidates) : 1;
 
   let groundDrag = GROUND_DRAG;
   let groundAccelFactor = GROUND_ACCEL_FACTOR;
@@ -2859,7 +2896,7 @@ function physicsTick() {
     horizontalDrag = groundDrag;
     accel = WALK_ACCEL * (player.sprinting ? SPRINT_ACCEL_MULT : 1) *
       (player.sneaking ? SNEAK_ACCEL_MULT : 1) * groundAccelFactor *
-      (bodyProps?.speed ?? supportProps?.speed ?? 1);
+      speedMul;
   } else {
     horizontalDrag = AIR_DRAG;
     accel = player.sprinting ? 0.026 : 0.02;
