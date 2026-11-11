@@ -225,6 +225,7 @@ flags. Blockstates with `uvlock` now rotate their UVs with the model, which keep
 stairs and other rotated models textured correctly. Blocks with no model
 geometry fall back to a particle-texture box when they are block entities; this
 is a generic visibility fallback, not a full chest/banner/skull renderer.
+Slime blocks bounce landing entities and bubble columns add upward velocity.
 
 Block collision uses the block model element boxes, so slabs, stairs, fences,
 walls, panes, chests and similar partial blocks have the right shape; plants,

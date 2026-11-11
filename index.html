@@ -2923,6 +2923,14 @@ function physicsTick() {
     player.vel.z *= 0.7;
   }
 
+  if (bodyPropsList.some(p => p.class === 'BubbleColumnBlock')) {
+    player.vel.y += 0.08;
+  }
+  if (!player.flying && player.onGround && preMoveVy < -0.1 && supportProps?.class === 'SlimeBlock') {
+    player.vel.y = Math.max(0.3, -preMoveVy * 0.8);
+    player.onGround = false;
+  }
+
   if (Math.abs(player.vel.x) < 0.005) player.vel.x = 0;
   if (Math.abs(player.vel.y) < 0.005) player.vel.y = 0;
   if (Math.abs(player.vel.z) < 0.005) player.vel.z = 0;
