@@ -2064,7 +2064,7 @@ function applyUvLock(quadUVs, faceName, q) {
   });
 }
 
-function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey, uvLock = false, rotX = 0, rotY = 0) {
+function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey, uvLock = false, rotX = 0, rotY = 0, facing = null) {
   const from = el.from;
   const to = el.to;
   const f = [from[0] / 16, from[1] / 16, from[2] / 16];
@@ -2110,6 +2110,14 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
 
     const rot = (face.rotation || 0) % 360;
     for (let i = 0; i < rot / 90; i++) quadUVs.push(quadUVs.shift());
+
+    // East-facing bottom stairs are the unrotated vanilla model and have no
+    // uvlock variant. Their horizontal face is one quarter-turn off from the
+    // viewer's default basis; all other stair variants use uvlock.
+    if (rotX === 0 && (faceName === 'up' || faceName === 'down')
+        && /_stairs$/.test(blockId) && (facing === 'east' || (!facing && rotY === 0))) {
+      quadUVs = quadUVs.map(([u, v]) => [1 - v, u]);
+    }
 
     // Blockstate uvlock keeps textures aligned to the world when the model is
     // rotated. Vanilla applies this per face, not as one global spin.
@@ -2236,7 +2244,7 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
           }
         }
       }
-      collectElementFaces(el, data.textures || {}, id, q, offset, skipFaces, overrideMaterial, translucent, blockKey, entry.uvlock, rotX, rotY);
+      collectElementFaces(el, data.textures || {}, id, q, offset, skipFaces, overrideMaterial, translucent, blockKey, entry.uvlock, rotX, rotY, properties?.facing);
     }
   }
 }
