@@ -2104,7 +2104,7 @@ function collectBlockEntityGeometry(info) {
     let n = quad.normal || [0, 1, 0];
     const nx = n[0] * cos - n[2] * sin;
     const nz = n[0] * sin + n[2] * cos;
-    const uvs = (quad.uvs || []).map(([u, v]) => [u, 1 - v]);
+    const uvs = (quad.uvs || []).map(([u, v]) => [u, model.flipV === false ? v : 1 - v]);
     pushQuad(bucket, corners[0], corners[1], corners[2], corners[3], new THREE.Vector3(nx, n[1], nz), uvs, `${pos.x},${pos.y},${pos.z}`);
   }
   return true;
