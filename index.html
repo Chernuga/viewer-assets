@@ -84,7 +84,7 @@
             <label for="heightResSlider">Heightmap resolution</label>
             <span id="heightResValue">256 px</span>
           </div>
-          <input id="heightResSlider" type="range" min="0" max="2" step="1" value="1" />
+          <input id="heightResSlider" type="range" min="0" max="3" step="1" value="2" />
         </div>
         <button id="cameraBtn" class="btn toggle on" aria-pressed="true" title="Switch between the creative first-person camera and the orbit camera">Camera: Creative</button>
         <button id="refreshShaBtn" class="btn secondary">Refresh SHA</button>
@@ -362,8 +362,8 @@ let worldBounds = null;
 const textureCache = new Map();
 const HEIGHTMAP_STORAGE_KEY = 'voxelBuilderHeightMapsEnabled';
 const HEIGHT_RES_STORAGE_KEY = 'voxelBuilderHeightMapResolution';
-const HEIGHT_RES_OPTIONS = [16, 256, 512];
-const HEIGHT_RES_LABELS = ['16 px', '256 px', '512 px'];
+const HEIGHT_RES_OPTIONS = [16, 128, 256, 512];
+const HEIGHT_RES_LABELS = ['16 px', '128 px', '256 px', '512 px'];
 let heightMapsEnabled = true;
 let heightResRebuildTimer = 0;
 const heightSunDir = { value: new THREE.Vector3(0, 1, 0) };
