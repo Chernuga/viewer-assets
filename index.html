@@ -2937,6 +2937,8 @@ function physicsTick() {
       player.vel.z += -Math.cos(player.yaw) * SPRINT_JUMP_BOOST;
     }
     player.jumpCooldown = JUMP_COOLDOWN_TICKS;
+  } else if (climbable && !player.flying && sneakHeld) {
+    player.vel.y = Math.min(player.vel.y, -0.15);
   } else if (climbable && !player.flying && (fwd > 0.1 || jumpHeld)) {
     player.vel.y = Math.max(player.vel.y, 0.2);
   }
@@ -2979,7 +2981,11 @@ function physicsTick() {
   }
 
   if (bodyPropsList.some(p => p.class === 'BubbleColumnBlock')) {
-    player.vel.y += 0.08;
+    const bubbleDown = [-0.2, -1.2, -2.2].some(dy => {
+      const below = blockPhysics(blockIdAtWorld(player.pos.x, player.pos.y + dy, player.pos.z));
+      return below?.class === 'MagmaBlock';
+    });
+    player.vel.y += bubbleDown ? -0.08 : 0.08;
   }
   if (!player.flying && player.onGround && preMoveVy < -0.1 && supportProps?.class === 'SlimeBlock') {
     player.vel.y = Math.max(0.3, -preMoveVy * 0.8);
