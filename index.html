@@ -382,6 +382,7 @@ const materialBuckets = new Map();
 const blockMaterialCache = new Map();
 let blockProperties = {};
 let blockPropertiesReady = false;
+let blockEntityModels = {};
 const physicsBlocks = new Map();
 
 const magentaTex = new THREE.DataTexture(new Uint8Array([255,0,255,255]), 1, 1, THREE.RGBAFormat);
@@ -1636,6 +1637,8 @@ async function loadBlockProperties() {
   try {
     const res = await fetch(new URL('viewer/block_properties.json', location.href));
     if (res.ok) blockProperties = await res.json();
+    const beRes = await fetch(new URL('viewer/block_entity_models.json', location.href));
+    if (beRes.ok) blockEntityModels = await beRes.json();
     blockPropertiesReady = true;
   } catch (err) {
     console.warn('Block properties load failed', err);
@@ -2081,11 +2084,43 @@ function entriesAreOpaqueCube(entries) {
   return true;
 }
 
+function collectBlockEntityGeometry(info) {
+  const { id, pos, properties } = info;
+  const model = blockEntityModels[id.replace('minecraft:', '')];
+  if (!model) return false;
+  const material = getBlockMaterial(model.texture, undefined, false, false);
+  material.side = THREE.DoubleSide;
+  const bucket = getBucket(material);
+  const yawByFacing = { north: Math.PI, east: -Math.PI / 2, south: 0, west: Math.PI / 2 };
+  const yaw = yawByFacing[properties?.facing] || 0;
+  const cos = Math.cos(yaw), sin = Math.sin(yaw);
+  for (const quad of model.quads || []) {
+    const corners = quad.positions.map(([x, y, z]) => {
+      let rx = x / 16 - 0.5, rz = z / 16 - 0.5;
+      const tx = rx * cos - rz * sin;
+      const tz = rx * sin + rz * cos;
+      return new THREE.Vector3(pos.x + 0.5 + tx, pos.y + 0.5 + y / 16, pos.z + 0.5 + tz);
+    });
+    let n = quad.normal || [0, 1, 0];
+    const nx = n[0] * cos - n[2] * sin;
+    const nz = n[0] * sin + n[2] * cos;
+    const uvs = (quad.uvs || []).map(([u, v]) => [u, 1 - v]);
+    pushQuad(bucket, corners[0], corners[1], corners[2], corners[3], new THREE.Vector3(nx, n[1], nz), uvs, `${pos.x},${pos.y},${pos.z}`);
+  }
+  return true;
+}
+
 async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set()) {
-  const { id, pos, entries } = info;
+  const { id, pos, entries, properties } = info;
   if (!entries || entries.length === 0) return;
 
   registerBlockCollision(info);
+
+  const blockKey = `${pos.x},${pos.y},${pos.z}`;
+  if (blockEntityModels[id.replace('minecraft:', '')] && collectBlockEntityGeometry(info)) {
+    collisionSolids.add(blockKey);
+    return;
+  }
 
   const shaderConfig = await getShaderConfigForBlock(id);
   let overrideMaterial = null;
@@ -2097,7 +2132,6 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
   // Leaves are a cutout material: even against opaque neighbours, keep every
   // leaf face so connected canopies stay full instead of growing holes.
   const selfOpaque = !shaderConfig && !cutout && entriesAreOpaqueCube(entries);
-  const blockKey = `${pos.x},${pos.y},${pos.z}`;
 
   for (const entry of entries) {
     const data = entry.data;
@@ -2331,7 +2365,7 @@ async function getBlockModels(blockId, properties, pos) {
     }
     const cleanId = blockId.replace('minecraft:', '');
     const props = blockProperties[cleanId];
-    if (data && props?.blockEntity && (!data.elements || data.elements.length === 0)) {
+    if (data && props?.blockEntity && !blockEntityModels[cleanId] && (!data.elements || data.elements.length === 0)) {
       data = createBlockEntityFallbackModel(data);
     }
     if (data) result.push({ data, x: app.x, y: app.y, uvlock: !!app.uvlock });
@@ -2426,7 +2460,7 @@ async function build() {
     const [xStr, yStr, zStr] = key.split(',');
     const pos = { x: parseInt(xStr, 10), y: parseInt(yStr, 10), z: parseInt(zStr, 10) };
     const modelEntries = await getBlockModels(id, props, pos);
-    blockInfo.set(key, { id, pos, entries: modelEntries });
+    blockInfo.set(key, { id, pos, entries: modelEntries, properties: props });
     physicsBlocks.set(key, id);
     if (isFluidBlock(id)) fluidPositions.add(key);
     if (!SHADER_BLOCK_IDS.has(id) && !isTranslucentBlock(id) && !isCutoutBlock(id) && entriesAreOpaqueCube(modelEntries)) {
