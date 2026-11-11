@@ -179,9 +179,12 @@ everything. Use **Camera: Orbit** to go back to the orbit view.
 | `Esc` | release the mouse and browser shortcuts |
 
 On touch devices, the viewer switches to Pocket Edition-style controls: a
-left-hand movement joystick, drag-to-look on the canvas, and Jump / Sneak / Fly /
-Sprint buttons on the right. Pointer lock and fullscreen capture are skipped on
-touch; Fly and Sneak are toggles.
+left-hand movement joystick, drag-to-look on the canvas, and Jump / Sneak /
+Sprint buttons on the right. Pushing the joystick fully forward auto-sprints.
+Flight is toggled by double-tapping Jump. Pointer lock and fullscreen capture are
+skipped on touch; Sneak and Sprint are toggles. Touch starts in a full-screen
+play view with the editor/settings bar hidden; the ☰ button reveals it, and
+tapping the canvas returns to play. Opening Settings hides the touch controls.
 
 Ctrl+W is a browser-reserved shortcut. Capturing it (and Ctrl+A select-all and
 Ctrl+D bookmarks) uses the Keyboard Lock API, which Chrome only enables in

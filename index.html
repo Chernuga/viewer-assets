@@ -36,13 +36,15 @@
     #lockHint { position:absolute; left:50%; top:62%; transform:translate(-50%,-50%); padding:8px 14px; border-radius:8px; background:rgba(0,0,0,0.55); border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:13px; letter-spacing:0.03em; pointer-events:none; display:none; z-index:6; }
     .mobile-controls { display:none; position:fixed; inset:0; z-index:25; pointer-events:none; user-select:none; -webkit-user-select:none; }
     body.touch .mobile-controls.visible { display:block; }
+    body.touch.mobile-immersive .top { display:none; }
+    #mobileMenu { display:none; position:fixed; top:max(10px, env(safe-area-inset-top)); right:max(10px, env(safe-area-inset-right)); z-index:40; width:44px; height:44px; align-items:center; justify-content:center; border-radius:12px; border:1px solid rgba(57,255,20,0.35); background:rgba(4,16,20,0.62); color:#b8ffb0; font-size:20px; line-height:1; pointer-events:auto; touch-action:none; }
+    body.touch.mobile-immersive #mobileMenu { display:flex; }
     .joystick { position:absolute; left:max(18px, env(safe-area-inset-left)); bottom:max(18px, env(safe-area-inset-bottom)); width:128px; height:128px; border-radius:50%; border:1px solid rgba(255,255,255,0.22); background:radial-gradient(circle, rgba(255,255,255,0.06) 0 42%, rgba(0,0,0,0.18) 43% 100%); box-shadow:0 0 0 7px rgba(0,0,0,0.10), inset 0 0 20px rgba(0,0,0,0.22); pointer-events:auto; touch-action:none; }
     .joystick-knob { position:absolute; left:36px; top:36px; width:56px; height:56px; border-radius:50%; background:rgba(220,255,215,0.22); border:1px solid rgba(220,255,215,0.58); box-shadow:0 2px 10px rgba(0,0,0,0.35); transform:translate(0,0); pointer-events:none; }
     .mobile-actions { position:absolute; right:max(18px, env(safe-area-inset-right)); bottom:max(18px, env(safe-area-inset-bottom)); width:136px; height:190px; pointer-events:none; }
     .mobile-btn { position:absolute; pointer-events:auto; touch-action:none; border-radius:50%; border:1px solid rgba(255,255,255,0.25); background:rgba(4,16,20,0.55); color:#eaffea; font:700 10px/1 Inter,system-ui; letter-spacing:0.03em; text-transform:uppercase; box-shadow:0 2px 12px rgba(0,0,0,0.3); padding:0; }
     .mobile-btn.active { background:rgba(57,255,20,0.18); border-color:rgba(57,255,20,0.65); color:#b8ffb0; }
     #mobileSprint { left:0; bottom:92px; width:52px; height:44px; border-radius:12px; }
-    #mobileFly { right:0; bottom:92px; width:52px; height:44px; border-radius:12px; }
     #mobileSneak { left:0; bottom:0; width:52px; height:52px; }
     #mobileJump { right:0; bottom:0; width:72px; height:72px; }
     @media (max-width:700px) {
@@ -103,11 +105,11 @@
       </div>
       <div class="mobile-actions">
         <button id="mobileSprint" class="mobile-btn" type="button" aria-label="Toggle sprint">Sprint</button>
-        <button id="mobileFly" class="mobile-btn" type="button" aria-label="Toggle flight">Fly</button>
         <button id="mobileSneak" class="mobile-btn" type="button" aria-label="Toggle sneak">Sneak</button>
         <button id="mobileJump" class="mobile-btn" type="button" aria-label="Jump or fly up">Jump</button>
       </div>
     </div>
+    <button id="mobileMenu" type="button" aria-label="Show menu">☰</button>
     <div class="hud" id="hud">Build with: /setblock x y z block_id[prop=val,...] • /fill x1 y1 z1 x2 y2 z2 block_id[prop=val,...] • H toggles heightmaps</div>
     <div id="errorOverlay" class="error-overlay"></div>
   </div>
@@ -2470,6 +2472,9 @@ const playerInput = {
   jump: false, sneak: false, sprint: false,
   forwardEdge: false, jumpEdge: false,
 };
+let mobileSprintToggle = false;
+let mobileJoystickSprint = false;
+let mobileImmersive = false;
 
 let cameraMode = 'creative';
 let pointerLocked = false;
@@ -2841,6 +2846,8 @@ function clearPlayerInput() {
   playerInput.forward = playerInput.back = playerInput.left = playerInput.right = false;
   playerInput.jump = playerInput.sneak = playerInput.sprint = false;
   playerInput.forwardEdge = playerInput.jumpEdge = false;
+  mobileSprintToggle = false;
+  mobileJoystickSprint = false;
   resetJoystick();
   syncMobileButtons();
 }
@@ -2849,22 +2856,22 @@ function resetJoystick() {
   const knob = document.getElementById('joystickKnob');
   if (knob) knob.style.transform = 'translate(0px, 0px)';
   playerInput.forward = playerInput.back = playerInput.left = playerInput.right = false;
+  mobileJoystickSprint = false;
+  syncMobileSprint();
+}
+
+function syncMobileSprint() {
+  playerInput.sprint = mobileSprintToggle || mobileJoystickSprint;
 }
 
 function syncMobileButtons() {
   const jump = document.getElementById('mobileJump');
   const sneak = document.getElementById('mobileSneak');
-  const fly = document.getElementById('mobileFly');
   const sprint = document.getElementById('mobileSprint');
   if (jump) jump.classList.toggle('active', playerInput.jump);
   if (sneak) {
     sneak.classList.toggle('active', playerInput.sneak);
     sneak.setAttribute('aria-pressed', String(playerInput.sneak));
-  }
-  if (fly) {
-    fly.classList.toggle('active', player.flying);
-    fly.textContent = player.flying ? 'Land' : 'Fly';
-    fly.setAttribute('aria-pressed', String(player.flying));
   }
   if (sprint) {
     sprint.classList.toggle('active', playerInput.sprint);
@@ -2875,11 +2882,20 @@ function syncMobileButtons() {
 function updateMobileControls() {
   const el = document.getElementById('mobileControls');
   if (!el) return;
-  const visible = IS_TOUCH && cameraMode === 'creative';
+  const settingsOpen = document.getElementById('settingsPanel')?.classList.contains('open');
+  const visible = IS_TOUCH && cameraMode === 'creative' && mobileImmersive && !settingsOpen;
   el.classList.toggle('visible', visible);
   el.setAttribute('aria-hidden', String(!visible));
   if (!visible) resetJoystick();
   syncMobileButtons();
+}
+
+function setMobileImmersive(immersive) {
+  mobileImmersive = !!immersive;
+  document.body.classList.toggle('mobile-immersive', mobileImmersive);
+  if (mobileImmersive) setSettingsOpen(false);
+  updateMobileControls();
+  window.dispatchEvent(new Event('resize'));
 }
 
 function requestPointerLock() {
@@ -3135,6 +3151,7 @@ function setSettingsOpen(open) {
   settingsPanel.setAttribute('aria-hidden', String(!open));
   settingsBtn.setAttribute('aria-expanded', String(open));
   settingsBtn.classList.toggle('open', open);
+  updateMobileControls();
 }
 
 settingsBtn.addEventListener('click', (e) => {
@@ -3173,6 +3190,13 @@ function updateJoystickFromPointer(e) {
   playerInput.back = ny > dead;
   playerInput.left = nx < -dead;
   playerInput.right = nx > dead;
+  const magnitude = Math.hypot(nx, ny);
+  const autoSprint = ny < -0.65 && magnitude > 0.82;
+  if (autoSprint !== mobileJoystickSprint) {
+    mobileJoystickSprint = autoSprint;
+    syncMobileSprint();
+    syncMobileButtons();
+  }
 }
 
 joystickEl.addEventListener('pointerdown', (e) => {
@@ -3201,7 +3225,11 @@ joystickEl.addEventListener('pointercancel', releaseJoystick);
 
 canvas.addEventListener('pointerdown', (e) => {
   if (!IS_TOUCH || e.pointerType !== 'touch' || cameraMode !== 'creative') return;
-  if (settingsPanel.classList.contains('open')) return;
+  if (settingsPanel.classList.contains('open')) {
+    setSettingsOpen(false);
+    return;
+  }
+  if (!mobileImmersive) setMobileImmersive(true);
   e.preventDefault();
   lookPointerId = e.pointerId;
   lookX = e.clientX;
@@ -3218,7 +3246,7 @@ canvas.addEventListener('pointermove', (e) => {
   lookY = e.clientY;
   const sensitivity = CONFIG.player?.mouseSensitivity ?? 0.5;
   const f = sensitivity * 0.6 + 0.2;
-  const degPerPixel = f * f * f * 8 * 0.15 * 1.25;
+  const degPerPixel = f * f * f * 8 * 0.15 * 2.5;
   player.yaw -= THREE.MathUtils.degToRad(dx * degPerPixel);
   player.pitch -= THREE.MathUtils.degToRad(dy * degPerPixel);
   const limit = Math.PI / 2 - 0.001;
@@ -3234,8 +3262,15 @@ canvas.addEventListener('pointercancel', releaseLook);
 
 const mobileJump = document.getElementById('mobileJump');
 const mobileSneak = document.getElementById('mobileSneak');
-const mobileFly = document.getElementById('mobileFly');
 const mobileSprint = document.getElementById('mobileSprint');
+const mobileMenu = document.getElementById('mobileMenu');
+
+mobileMenu.addEventListener('pointerdown', (e) => {
+  if (!IS_TOUCH) return;
+  e.preventDefault();
+  e.stopPropagation();
+  setMobileImmersive(!mobileImmersive);
+});
 
 mobileJump.addEventListener('pointerdown', (e) => {
   if (!IS_TOUCH) return;
@@ -3263,27 +3298,20 @@ mobileSneak.addEventListener('pointerdown', (e) => {
   syncMobileButtons();
 });
 
-mobileFly.addEventListener('pointerdown', (e) => {
-  if (!IS_TOUCH) return;
-  e.preventDefault();
-  e.stopPropagation();
-  player.flying = !player.flying;
-  player.vel.y = 0;
-  player.onGround = false;
-  syncMobileButtons();
-});
-
 mobileSprint.addEventListener('pointerdown', (e) => {
   if (!IS_TOUCH) return;
   e.preventDefault();
   e.stopPropagation();
-  playerInput.sprint = !playerInput.sprint;
+  mobileSprintToggle = !mobileSprintToggle;
+  syncMobileSprint();
   if (!playerInput.sprint) {
     player.sprinting = false;
     player.sprintLatch = false;
   }
   syncMobileButtons();
 });
+
+if (IS_TOUCH) setMobileImmersive(true);
 
 
 document.addEventListener('keydown', (e) => {
