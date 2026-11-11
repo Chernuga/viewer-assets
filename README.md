@@ -178,6 +178,11 @@ everything. Use **Camera: Orbit** to go back to the orbit view.
 | `R` | respawn at the centre above the build |
 | `Esc` | release the mouse and browser shortcuts |
 
+On touch devices, the viewer switches to Pocket Edition-style controls: a
+left-hand movement joystick, drag-to-look on the canvas, and Jump / Sneak / Fly /
+Sprint buttons on the right. Pointer lock and fullscreen capture are skipped on
+touch; Fly and Sneak are toggles.
+
 Ctrl+W is a browser-reserved shortcut. Capturing it (and Ctrl+A select-all and
 Ctrl+D bookmarks) uses the Keyboard Lock API, which Chrome only enables in
 fullscreen, so clicking the canvas enters fullscreen, captures the mouse, and
