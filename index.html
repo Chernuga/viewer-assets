@@ -2034,21 +2034,33 @@ function uvFaceFromNormal(n) {
 function applyUvLock(quadUVs, faceName, q) {
   const source = UVLOCK_BASIS[faceName];
   if (!source) return quadUVs;
-  const rotatedNormal = new THREE.Vector3(...source.n).applyQuaternion(q);
-  const target = UVLOCK_BASIS[uvFaceFromNormal(rotatedNormal)];
-  if (!target) return quadUVs;
-  const inv = q.clone().invert();
-  const u2 = new THREE.Vector3(...target.u);
-  const v2 = new THREE.Vector3(...target.v);
-  const uA = new THREE.Vector3(...source.u);
-  const vA = new THREE.Vector3(...source.v);
+  // BlockMath.VANILLA_UV_TRANSFORM_LOCAL_TO_GLOBAL
+  const localToGlobal = {
+    south: new THREE.Quaternion(),
+    east: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2),
+    west: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2),
+    north: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI),
+    up: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2),
+    down: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2),
+  }[faceName];
+  if (!localToGlobal) return quadUVs;
+  const faceAction = q.clone().multiply(localToGlobal);
+  const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(faceAction);
+  const targetName = uvFaceFromNormal(normal);
+  const targetLocal = {
+    south: new THREE.Quaternion(),
+    east: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2),
+    west: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2),
+    north: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI),
+    up: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2),
+    down: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2),
+  }[targetName];
+  if (!targetLocal) return quadUVs;
+  // FaceBakery: uvTransform is the inverse face transformation.
+  const inv = targetLocal.invert().multiply(faceAction).invert();
   return quadUVs.map(([u, v]) => {
-    const vv = 1 - v;
-    const p = new THREE.Vector3()
-      .addScaledVector(u2, u - 0.5)
-      .addScaledVector(v2, vv - 0.5)
-      .applyQuaternion(inv);
-    return [p.dot(uA) + 0.5, 1 - (p.dot(vA) + 0.5)];
+    const p = new THREE.Vector3(u - 0.5, (1 - v) - 0.5, 0).applyQuaternion(inv);
+    return [p.x + 0.5, 1 - (p.y + 0.5)];
   });
 }
 
@@ -2101,9 +2113,7 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
 
     // Blockstate uvlock keeps textures aligned to the world when the model is
     // rotated. Vanilla applies this per face, not as one global spin.
-    if (uvLock && (rotX || rotY) && faceName !== 'up' && faceName !== 'down') {
-      quadUVs = applyUvLock(quadUVs, faceName, q);
-    }
+    if (uvLock && (rotX || rotY)) quadUVs = applyUvLock(quadUVs, faceName, q);
 
     const def = FACE_DEFS[faceName];
     const c = def.corners(f, t);
