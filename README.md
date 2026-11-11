@@ -219,6 +219,13 @@ in 20 Hz steps. Sneaking backs away from ledges, and the FOV widens while flying
 and sprinting. A safety floor stops the player at 100 blocks below the lowest
 placed block, so walking off the build cannot drop into an endless fall.
 
+`viewer/block_properties.json` is generated from the 26.3 block registry and
+drives per-block friction, speed factor, jump factor and liquid/climbable/web
+flags. Blockstates with `uvlock` now rotate their UVs with the model, which keeps
+stairs and other rotated models textured correctly. Blocks with no model
+geometry fall back to a particle-texture box when they are block entities; this
+is a generic visibility fallback, not a full chest/banner/skull renderer.
+
 Block collision uses the block model element boxes, so slabs, stairs, fences,
 walls, panes, chests and similar partial blocks have the right shape; plants,
 liquids, torches and rails are non-solid. Full cubes are stored in a Set and

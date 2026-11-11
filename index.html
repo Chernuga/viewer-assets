@@ -380,6 +380,9 @@ const animatedTextures = [];
 
 const materialBuckets = new Map();
 const blockMaterialCache = new Map();
+let blockProperties = {};
+let blockPropertiesReady = false;
+const physicsBlocks = new Map();
 
 const magentaTex = new THREE.DataTexture(new Uint8Array([255,0,255,255]), 1, 1, THREE.RGBAFormat);
 magentaTex.needsUpdate = true;
@@ -1628,6 +1631,26 @@ async function loadColormaps() {
   } catch (err) { console.warn('Colormap load failed', err); }
 }
 
+async function loadBlockProperties() {
+  if (blockPropertiesReady) return;
+  try {
+    const res = await fetch(new URL('viewer/block_properties.json', location.href));
+    if (res.ok) blockProperties = await res.json();
+    blockPropertiesReady = true;
+  } catch (err) {
+    console.warn('Block properties load failed', err);
+    blockPropertiesReady = true;
+  }
+}
+
+function blockIdAtWorld(x, y, z) {
+  return physicsBlocks.get(`${Math.floor(x - 0.5)},${Math.floor(y - 0.5)},${Math.floor(z - 0.5)}`);
+}
+
+function blockPhysics(id) {
+  return id ? blockProperties[id.replace('minecraft:', '')] : null;
+}
+
 function getBiomeColor(temp, humidity, cmap) {
   if (!cmap) return new THREE.Color(1, 1, 1);
   // The colormap's valid triangle is lower-left: X is inverted temperature,
@@ -1977,7 +2000,7 @@ function registerBlockCollision(info) {
   else if (shape.boxes.length) collisionPartials.set(key, shape.boxes);
 }
 
-function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey) {
+function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey, uvLock = false, rotX = 0, rotY = 0) {
   const from = el.from;
   const to = el.to;
   const f = [from[0] / 16, from[1] / 16, from[2] / 16];
@@ -2016,6 +2039,17 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
 
     const rot = (face.rotation || 0) % 360;
     for (let i = 0; i < rot / 90; i++) quadUVs.push(quadUVs.shift());
+
+    // Blockstate uvlock keeps textures aligned to the world when the model is
+    // rotated. Without it, stairs and other rotated models show sideways UVs.
+    if (uvLock && (rotX || rotY)) {
+      const angle = THREE.MathUtils.degToRad(-(rotX + rotY));
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      quadUVs = quadUVs.map(([u, v]) => {
+        const x = u - 0.5, y = v - 0.5;
+        return [0.5 + x * cos - y * sin, 0.5 + x * sin + y * cos];
+      });
+    }
 
     const def = FACE_DEFS[faceName];
     const c = def.corners(f, t);
@@ -2093,7 +2127,7 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
           }
         }
       }
-      collectElementFaces(el, data.textures || {}, id, q, offset, skipFaces, overrideMaterial, translucent, blockKey);
+      collectElementFaces(el, data.textures || {}, id, q, offset, skipFaces, overrideMaterial, translucent, blockKey, entry.uvlock, rotX, rotY);
     }
   }
 }
@@ -2211,6 +2245,7 @@ function clearWorld() {
   materialBuckets.clear();
   collisionSolids.clear();
   collisionPartials.clear();
+  physicsBlocks.clear();
   worldBounds = null;
 }
 
@@ -2233,6 +2268,17 @@ function createFluidModel(id) {
   }
   return {
     textures: { all: `block/${fluid}_still` },
+    elements: [{ from: [0, 0, 0], to: [16, 16, 16], faces }],
+  };
+}
+
+function createBlockEntityFallbackModel(data) {
+  const texture = data.textures?.particle || data.textures?.all || 'block/stone';
+  const faces = {};
+  for (const faceName of FACE_NAMES) faces[faceName] = { uv: [0, 0, 16, 16], texture: '#particle' };
+  return {
+    ...data,
+    textures: { ...(data.textures || {}), particle: texture },
     elements: [{ from: [0, 0, 0], to: [16, 16, 16], faces }],
   };
 }
@@ -2260,7 +2306,7 @@ async function getBlockModels(blockId, properties, pos) {
         else if (pos) { const hash = (((pos.x * 73856093) ^ (pos.y * 19349663) ^ (pos.z * 83492791)) >>> 0); chosen = best[hash % best.length]; }
         else chosen = best[0];
       } else chosen = best;
-      modelApps.push({ model: chosen.model, x: chosen.x || 0, y: chosen.y || 0 });
+      modelApps.push({ model: chosen.model, x: chosen.x || 0, y: chosen.y || 0, uvlock: !!chosen.uvlock });
     }
   } else if (stateData.multipart) {
     for (const part of stateData.multipart) {
@@ -2272,7 +2318,7 @@ async function getBlockModels(blockId, properties, pos) {
       }
       if (match && part.apply) {
         const apps = Array.isArray(part.apply) ? part.apply : [part.apply];
-        for (const app of apps) modelApps.push({ model: app.model, x: app.x || 0, y: app.y || 0 });
+        for (const app of apps) modelApps.push({ model: app.model, x: app.x || 0, y: app.y || 0, uvlock: !!app.uvlock });
       }
     }
   }
@@ -2283,7 +2329,12 @@ async function getBlockModels(blockId, properties, pos) {
     if (data && isFluidBlock(blockId) && (!data.elements || data.elements.length === 0)) {
       data = { ...data, ...createFluidModel(blockId) };
     }
-    if (data) result.push({ data, x: app.x, y: app.y });
+    const cleanId = blockId.replace('minecraft:', '');
+    const props = blockProperties[cleanId];
+    if (data && props?.blockEntity && (!data.elements || data.elements.length === 0)) {
+      data = createBlockEntityFallbackModel(data);
+    }
+    if (data) result.push({ data, x: app.x, y: app.y, uvlock: !!app.uvlock });
   }
   return result;
 }
@@ -2333,6 +2384,7 @@ async function build() {
   errorOverlay.textContent = ''; errorOverlay.style.display = 'none';
   await loadColormaps();
   tintColorCache.clear();
+  await loadBlockProperties();
 
   const placementMap = new Map();
   worldBounds = { minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity };
@@ -2375,6 +2427,7 @@ async function build() {
     const pos = { x: parseInt(xStr, 10), y: parseInt(yStr, 10), z: parseInt(zStr, 10) };
     const modelEntries = await getBlockModels(id, props, pos);
     blockInfo.set(key, { id, pos, entries: modelEntries });
+    physicsBlocks.set(key, id);
     if (isFluidBlock(id)) fluidPositions.add(key);
     if (!SHADER_BLOCK_IDS.has(id) && !isTranslucentBlock(id) && !isCutoutBlock(id) && entriesAreOpaqueCube(modelEntries)) {
       opaquePositions.add(key);
@@ -2742,14 +2795,37 @@ function physicsTick() {
   let fwd = rawFwd * 0.98;
   let strafe = rawStrafe * 0.98;
 
+  const supportId = blockIdAtWorld(player.pos.x, player.pos.y - 0.02, player.pos.z);
+  const supportProps = blockPhysics(supportId);
+  const bodyIds = [
+    blockIdAtWorld(player.pos.x, player.pos.y + 0.1, player.pos.z),
+    blockIdAtWorld(player.pos.x, player.pos.y + 0.9, player.pos.z),
+    blockIdAtWorld(player.pos.x, player.pos.y + 1.4, player.pos.z),
+  ];
+  const bodyPropsList = bodyIds.map(blockPhysics).filter(Boolean);
+  const bodyProps = bodyPropsList[0] || null;
+  const inWeb = bodyPropsList.some(p => p.class === 'WebBlock');
+  const inWater = bodyIds.some(id => id === 'water') || bodyPropsList.some(p => p.class === 'LiquidBlock' && p.light !== 15);
+  const inLava = bodyIds.some(id => id === 'lava') || bodyPropsList.some(p => p.class === 'LiquidBlock' && p.light === 15);
+  const inPowder = bodyPropsList.some(p => p.class === 'PowderSnowBlock');
+  const climbable = bodyPropsList.some(p => p.climbable);
+
+  let groundDrag = GROUND_DRAG;
+  let groundAccelFactor = GROUND_ACCEL_FACTOR;
+  if (supportProps) {
+    groundDrag = Math.max(0.05, Math.min(0.98, supportProps.friction * 0.91));
+    groundAccelFactor = 0.16277136 / (groundDrag * groundDrag * groundDrag);
+  }
+
   let accel, horizontalDrag;
   if (player.flying) {
     horizontalDrag = AIR_DRAG;
     accel = FLY_ACCEL * (player.sprinting ? 2 : 1);
   } else if (player.onGround) {
-    horizontalDrag = GROUND_DRAG;
+    horizontalDrag = groundDrag;
     accel = WALK_ACCEL * (player.sprinting ? SPRINT_ACCEL_MULT : 1) *
-      (player.sneaking ? SNEAK_ACCEL_MULT : 1) * GROUND_ACCEL_FACTOR;
+      (player.sneaking ? SNEAK_ACCEL_MULT : 1) * groundAccelFactor *
+      (bodyProps?.speed ?? supportProps?.speed ?? 1);
   } else {
     horizontalDrag = AIR_DRAG;
     accel = player.sprinting ? 0.026 : 0.02;
@@ -2769,12 +2845,14 @@ function physicsTick() {
     if (jumpHeld) player.vel.y += FLY_VERTICAL_ACCEL;
     if (sneakHeld) player.vel.y -= FLY_VERTICAL_ACCEL;
   } else if (jumpHeld && player.onGround && player.jumpCooldown === 0) {
-    player.vel.y = JUMP_VELOCITY;
+    player.vel.y = JUMP_VELOCITY * (supportProps?.jump ?? 1);
     if (player.sprinting) {
       player.vel.x += -Math.sin(player.yaw) * SPRINT_JUMP_BOOST;
       player.vel.z += -Math.cos(player.yaw) * SPRINT_JUMP_BOOST;
     }
     player.jumpCooldown = JUMP_COOLDOWN_TICKS;
+  } else if (climbable && !player.flying && (fwd > 0.1 || jumpHeld)) {
+    player.vel.y = Math.max(player.vel.y, 0.2);
   }
 
   const wasFlying = player.flying;
@@ -2791,6 +2869,25 @@ function physicsTick() {
   }
   player.vel.x *= horizontalDrag;
   player.vel.z *= horizontalDrag;
+
+  if (inWeb) {
+    player.vel.x *= 0.25;
+    player.vel.z *= 0.25;
+    player.vel.y *= 0.05;
+  } else if (inWater) {
+    player.vel.x *= 0.8;
+    player.vel.z *= 0.8;
+    player.vel.y *= 0.8;
+    if (jumpHeld) player.vel.y += 0.04;
+  } else if (inLava) {
+    player.vel.x *= 0.5;
+    player.vel.z *= 0.5;
+    player.vel.y *= 0.5;
+    if (jumpHeld) player.vel.y += 0.02;
+  } else if (inPowder) {
+    player.vel.x *= 0.7;
+    player.vel.z *= 0.7;
+  }
 
   if (Math.abs(player.vel.x) < 0.005) player.vel.x = 0;
   if (Math.abs(player.vel.y) < 0.005) player.vel.y = 0;
