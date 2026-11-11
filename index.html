@@ -2113,7 +2113,16 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
 
     // Blockstate uvlock keeps textures aligned to the world when the model is
     // rotated. Vanilla applies this per face, not as one global spin.
-    if (uvLock && (rotX || rotY)) quadUVs = applyUvLock(quadUVs, faceName, q);
+    if (uvLock && (rotX || rotY)) {
+      if (faceName === 'up' || faceName === 'down') {
+        // Minecraft's default top/bottom UV basis is rotated 90 degrees
+        // relative to the side-face basis; keep the texture attached to the
+        // stair but remove that quarter-turn offset.
+        quadUVs = quadUVs.map(([u, v]) => [1 - v, u]);
+      } else {
+        quadUVs = applyUvLock(quadUVs, faceName, q);
+      }
+    }
 
     const def = FACE_DEFS[faceName];
     const c = def.corners(f, t);
