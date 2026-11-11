@@ -2043,7 +2043,7 @@ function applyUvLock(quadUVs, faceName, q) {
   });
 }
 
-function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey, uvLock = false, rotX = 0, rotY = 0) {
+function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey, noFaceDedup = false, uvLock = false, rotX = 0, rotY = 0) {
   const from = el.from;
   const to = el.to;
   const f = [from[0] / 16, from[1] / 16, from[2] / 16];
@@ -2067,6 +2067,9 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
     const face = el.faces[faceName];
     const texPath = resolveTexture(face.texture, modelTextures);
     const material = overrideMaterial || getBlockMaterial(texPath, face.tintindex, translucent, flat);
+    // Partial models (stairs, slabs, fences...) have coincident faces that are
+    // part of their visible shape; never run them through cube-face dedupe.
+    if (noFaceDedup) material.userData.noFaceDedup = true;
     // Translucent and cutout materials must keep every face: adjacent leaves
     // and glass cells have coincident faces that must not be deduplicated.
     if (translucent || isCutoutBlock(blockId)) material.userData.noFaceDedup = true;
@@ -2194,7 +2197,7 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
           }
         }
       }
-      collectElementFaces(el, data.textures || {}, id, q, offset, skipFaces, overrideMaterial, translucent, blockKey, entry.uvlock, rotX, rotY);
+      collectElementFaces(el, data.textures || {}, id, q, offset, skipFaces, overrideMaterial, translucent, blockKey, !selfOpaque, entry.uvlock, rotX, rotY);
     }
   }
 }
