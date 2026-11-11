@@ -264,10 +264,13 @@ function fitViewer() {
   if (!w || !h) return;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 3.0));
   renderer.setSize(w, h, false);
 }
 fitViewer();
 window.addEventListener('resize', fitViewer);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', fitViewer);
+if (window.ResizeObserver && viewerEl) new ResizeObserver(() => fitViewer()).observe(viewerEl);
 document.addEventListener('fullscreenchange', () => requestAnimationFrame(fitViewer));
 
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
