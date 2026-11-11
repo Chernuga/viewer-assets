@@ -2935,6 +2935,11 @@ function physicsTick() {
     player.vel.x += (-sinYaw * fwd + cosYaw * strafe) * scale;
     player.vel.z += (-cosYaw * fwd - sinYaw * strafe) * scale;
   }
+  if (inWeb) {
+    player.vel.x *= 0.25;
+    player.vel.z *= 0.25;
+    player.vel.y *= 0.05;
+  }
 
   if (!jumpHeld) player.jumpCooldown = 0;
 
@@ -2969,11 +2974,12 @@ function physicsTick() {
   player.vel.x *= horizontalDrag;
   player.vel.z *= horizontalDrag;
 
-  if (inWeb) {
-    player.vel.x *= 0.25;
-    player.vel.z *= 0.25;
-    player.vel.y *= 0.05;
-  } else if (inWater) {
+  if (inWater) {
+    player.vel.x *= 0.8;
+    player.vel.z *= 0.8;
+    player.vel.y *= 0.8;
+    if (jumpHeld) player.vel.y += 0.04;
+  } else if (inLava) {
     player.vel.x *= 0.8;
     player.vel.z *= 0.8;
     player.vel.y *= 0.8;
