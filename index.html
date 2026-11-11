@@ -2129,11 +2129,16 @@ function collectBlockEntityGeometry(info) {
   const { id, pos, properties } = info;
   const model = blockEntityModels[id.replace('minecraft:', '')];
   if (!model) return false;
-  const material = getBlockMaterial(model.texture, undefined, false, false);
+  let material = getBlockMaterial(model.texture, undefined, false, false);
+  if (model.tint) {
+    material = material.clone();
+    material.color.set(model.tint);
+  }
   material.side = THREE.DoubleSide;
   const bucket = getBucket(material);
   const yawByFacing = { north: Math.PI, east: -Math.PI / 2, south: 0, west: Math.PI / 2 };
-  const yaw = yawByFacing[properties?.facing] || 0;
+  let yaw = yawByFacing[properties?.facing] || 0;
+  if (properties?.rotation !== undefined) yaw += (Number(properties.rotation) / 16) * Math.PI * 2;
   const cos = Math.cos(yaw), sin = Math.sin(yaw);
   for (const quad of model.quads || []) {
     const corners = quad.positions.map(([x, y, z]) => {
