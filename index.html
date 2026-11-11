@@ -268,10 +268,15 @@ function fitViewer() {
   renderer.setSize(w, h, false);
 }
 fitViewer();
-window.addEventListener('resize', fitViewer);
-if (window.visualViewport) window.visualViewport.addEventListener('resize', fitViewer);
-if (window.ResizeObserver && viewerEl) new ResizeObserver(() => fitViewer()).observe(viewerEl);
-document.addEventListener('fullscreenchange', () => requestAnimationFrame(fitViewer));
+let fitRaf = 0;
+function scheduleFit() {
+  if (fitRaf) return;
+  fitRaf = requestAnimationFrame(() => { fitRaf = 0; fitViewer(); });
+}
+window.addEventListener('resize', scheduleFit);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleFit);
+if (window.ResizeObserver && viewerEl) new ResizeObserver(scheduleFit).observe(viewerEl);
+document.addEventListener('fullscreenchange', scheduleFit);
 
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
 scene.add(ambientLight);
