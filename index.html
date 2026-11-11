@@ -1795,6 +1795,7 @@ function getBucket(material) {
 
 const _qc0 = new THREE.Vector3(), _qc1 = new THREE.Vector3(), _qc2 = new THREE.Vector3(), _qc3 = new THREE.Vector3();
 const _qn = new THREE.Vector3();
+const missingTextureReported = new Set();
 
 function pushQuad(bucket, c0, c1, c2, c3, n, uvs, blockKey) {
   const worldU = c0.distanceTo(c1), worldV = c0.distanceTo(c3);
@@ -2075,6 +2076,13 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
     const face = el.faces[faceName];
     const texPath = resolveTexture(face.texture, modelTextures);
     const material = overrideMaterial || getBlockMaterial(texPath, face.tintindex, translucent, flat);
+    if (!overrideMaterial && material.map === magentaTex) {
+      const key = `${blockId}|${texPath}`;
+      if (!missingTextureReported.has(key)) {
+        missingTextureReported.add(key);
+        showError(`Missing texture for ${blockId}: ${texPath}`);
+      }
+    }
     // Translucent and cutout materials must keep every face: adjacent leaves
     // and glass cells have coincident faces that must not be deduplicated.
     if ((translucent && !translucencyKeepsInternalFaces(blockId)) || isCutoutBlock(blockId)) material.userData.noFaceDedup = true;
@@ -2323,6 +2331,7 @@ function clearWorld() {
     if (c.geometry) c.geometry.dispose();
   }
   materialBuckets.clear();
+  missingTextureReported.clear();
   collisionSolids.clear();
   collisionPartials.clear();
   physicsBlocks.clear();
