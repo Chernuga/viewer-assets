@@ -1691,6 +1691,14 @@ function isTranslucentBlock(id) {
   return TRANSLUCENT_BLOCKS.has(b) || b.includes('stained_glass');
 }
 
+/* Solid translucent cubes hide their internal faces exactly like glass does;
+ * ice was keeping them and showing dark overlapping planes inside ice paths. */
+function translucencyKeepsInternalFaces(id) {
+  const b = id.replace('minecraft:', '');
+  return b === 'ice' || b === 'blue_ice' || b === 'frosted_ice'
+    || b === 'slime_block' || b === 'honey_block' || b === 'tinted_glass';
+}
+
 /* Leaves are alpha-cutout, not translucent, but they must not count as opaque
  * for face culling: a solid block behind a leaf block has to keep its face so
  * it can show through the leaf holes. */
@@ -2069,7 +2077,7 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
     const material = overrideMaterial || getBlockMaterial(texPath, face.tintindex, translucent, flat);
     // Translucent and cutout materials must keep every face: adjacent leaves
     // and glass cells have coincident faces that must not be deduplicated.
-    if (translucent || isCutoutBlock(blockId)) material.userData.noFaceDedup = true;
+    if ((translucent && !translucencyKeepsInternalFaces(blockId)) || isCutoutBlock(blockId)) material.userData.noFaceDedup = true;
     const bucket = getBucket(material);
 
     const rawUv = face.uv ? face.uv : getDefaultUV(faceName, from, to);
