@@ -33,12 +33,10 @@
     #crosshair::before, #crosshair::after { content:''; position:absolute; background:#fff; mix-blend-mode:exclusion; box-shadow:0 0 1px rgba(0,0,0,0.35); }
     #crosshair::before { left:9px; top:0; width:2px; height:20px; }
     #crosshair::after { left:0; top:9px; width:20px; height:2px; }
-    #lockHint { position:absolute; left:50%; top:62%; transform:translate(-50%,-50%); padding:8px 14px; border-radius:8px; background:rgba(0,0,0,0.55); border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:13px; letter-spacing:0.03em; pointer-events:none; display:none; z-index:6; }
     .mobile-controls { display:none; position:fixed; inset:0; z-index:25; pointer-events:none; user-select:none; -webkit-user-select:none; }
     body.touch .mobile-controls.visible { display:block; }
-    body.touch.mobile-immersive .top { display:none; }
-    #mobileMenu { display:none; position:fixed; top:max(10px, env(safe-area-inset-top)); right:max(10px, env(safe-area-inset-right)); z-index:40; width:44px; height:44px; align-items:center; justify-content:center; border-radius:12px; border:1px solid rgba(57,255,20,0.35); background:rgba(4,16,20,0.62); color:#b8ffb0; font-size:20px; line-height:1; pointer-events:auto; touch-action:none; }
-    body.touch.mobile-immersive #mobileMenu { display:flex; }
+    body.touch.mobile-fullscreen .top { display:none; }
+    #mobileFullscreen { position:absolute; right:0; bottom:92px; width:52px; height:44px; border-radius:12px; font-size:18px; line-height:1; }
     .joystick { position:absolute; left:max(18px, env(safe-area-inset-left)); bottom:max(18px, env(safe-area-inset-bottom)); width:128px; height:128px; border-radius:50%; border:1px solid rgba(255,255,255,0.22); background:radial-gradient(circle, rgba(255,255,255,0.06) 0 42%, rgba(0,0,0,0.18) 43% 100%); box-shadow:0 0 0 7px rgba(0,0,0,0.10), inset 0 0 20px rgba(0,0,0,0.22); pointer-events:auto; touch-action:none; }
     .joystick-knob { position:absolute; left:36px; top:36px; width:56px; height:56px; border-radius:50%; background:rgba(220,255,215,0.22); border:1px solid rgba(220,255,215,0.58); box-shadow:0 2px 10px rgba(0,0,0,0.35); transform:translate(0,0); pointer-events:none; }
     .mobile-actions { position:absolute; right:max(18px, env(safe-area-inset-right)); bottom:max(18px, env(safe-area-inset-bottom)); width:136px; height:190px; pointer-events:none; }
@@ -53,7 +51,6 @@
       .btn { padding:8px 9px; font-size:10px; }
       .settings-panel { width:220px; max-height:calc(100vh - 108px); }
       body.touch .hud { display:none; }
-      body.touch #lockHint { display:none !important; }
     }
     body.play #webgl-canvas { cursor:crosshair; }
     .error-overlay { position:absolute; top:10px; right:10px; max-width:400px; max-height:300px; overflow:auto; background:rgba(255,0,0,0.1); border:1px solid rgba(255,0,0,0.3); border-radius:8px; padding:8px; font-size:12px; color:#ff9999; display:none; z-index:20; white-space:pre-wrap; word-break:break-all; }
@@ -98,7 +95,6 @@
   <div class="viewer">
     <canvas id="webgl-canvas"></canvas>
     <div id="crosshair"></div>
-    <div id="lockHint">Click to play — captures mouse and Ctrl+W (Esc releases)</div>
     <div id="mobileControls" class="mobile-controls" aria-hidden="true">
       <div id="joystick" class="joystick" aria-label="Movement joystick">
         <div id="joystickKnob" class="joystick-knob"></div>
@@ -107,10 +103,10 @@
         <button id="mobileSprint" class="mobile-btn" type="button" aria-label="Toggle sprint">Sprint</button>
         <button id="mobileSneak" class="mobile-btn" type="button" aria-label="Toggle sneak">Sneak</button>
         <button id="mobileJump" class="mobile-btn" type="button" aria-label="Jump or fly up">Jump</button>
+        <button id="mobileFullscreen" class="mobile-btn" type="button" aria-label="Toggle fullscreen">⛶</button>
       </div>
     </div>
-    <button id="mobileMenu" type="button" aria-label="Show menu">☰</button>
-    <div class="hud" id="hud">Build with: /setblock x y z block_id[prop=val,...] • /fill x1 y1 z1 x2 y2 z2 block_id[prop=val,...] • H toggles heightmaps</div>
+    <div class="hud" id="hud"></div>
     <div id="errorOverlay" class="error-overlay"></div>
   </div>
 </div>
@@ -2474,7 +2470,7 @@ const playerInput = {
 };
 let mobileSprintToggle = false;
 let mobileJoystickSprint = false;
-let mobileImmersive = false;
+let mobileFullscreen = false;
 
 let cameraMode = 'creative';
 let pointerLocked = false;
@@ -2868,6 +2864,7 @@ function syncMobileButtons() {
   const jump = document.getElementById('mobileJump');
   const sneak = document.getElementById('mobileSneak');
   const sprint = document.getElementById('mobileSprint');
+  const fullscreen = document.getElementById('mobileFullscreen');
   if (jump) jump.classList.toggle('active', playerInput.jump);
   if (sneak) {
     sneak.classList.toggle('active', playerInput.sneak);
@@ -2877,26 +2874,54 @@ function syncMobileButtons() {
     sprint.classList.toggle('active', playerInput.sprint);
     sprint.setAttribute('aria-pressed', String(playerInput.sprint));
   }
+  if (fullscreen) {
+    const on = !!document.fullscreenElement || mobileFullscreen;
+    fullscreen.textContent = on ? '⤢' : '⛶';
+    fullscreen.setAttribute('aria-pressed', String(on));
+    fullscreen.setAttribute('aria-label', on ? 'Exit fullscreen' : 'Enter fullscreen');
+  }
 }
 
 function updateMobileControls() {
   const el = document.getElementById('mobileControls');
   if (!el) return;
   const settingsOpen = document.getElementById('settingsPanel')?.classList.contains('open');
-  const visible = IS_TOUCH && cameraMode === 'creative' && mobileImmersive && !settingsOpen;
+  const visible = IS_TOUCH && cameraMode === 'creative' && !settingsOpen;
   el.classList.toggle('visible', visible);
   el.setAttribute('aria-hidden', String(!visible));
   if (!visible) resetJoystick();
   syncMobileButtons();
 }
 
-function setMobileImmersive(immersive) {
-  mobileImmersive = !!immersive;
-  document.body.classList.toggle('mobile-immersive', mobileImmersive);
-  if (mobileImmersive) setSettingsOpen(false);
+function setMobileFullscreen(on) {
+  mobileFullscreen = !!on;
+  document.body.classList.toggle('mobile-fullscreen', mobileFullscreen);
+  if (mobileFullscreen) setSettingsOpen(false);
   updateMobileControls();
   window.dispatchEvent(new Event('resize'));
 }
+
+function toggleMobileFullscreen() {
+  if (!IS_TOUCH) return;
+  if (document.fullscreenElement) {
+    document.exitFullscreen()
+      .catch(() => setMobileFullscreen(false));
+    return;
+  }
+  if (document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen()
+      .then(() => setMobileFullscreen(true))
+      .catch(() => setMobileFullscreen(!mobileFullscreen));
+  } else {
+    // iOS Safari does not expose element fullscreen; still give a full-screen
+    // layout by hiding the editor bar.
+    setMobileFullscreen(!mobileFullscreen);
+  }
+}
+
+document.addEventListener('fullscreenchange', () => {
+  if (IS_TOUCH) setMobileFullscreen(!!document.fullscreenElement);
+});
 
 function requestPointerLock() {
   if (IS_TOUCH || cameraMode !== 'creative' || pointerLocked) return;
@@ -2984,31 +3009,20 @@ function setCameraMode(mode, requestLock = true) {
     camera.fov = baseFov;
     camera.updateProjectionMatrix();
   }
-  updateLockHint();
   updateHud();
   updateMobileControls();
-}
-
-function updateLockHint() {
-  const hint = document.getElementById('lockHint');
-  if (!hint) return;
-  hint.style.display = (!IS_TOUCH && cameraMode === 'creative' && !pointerLocked) ? 'block' : 'none';
 }
 
 function updateHud() {
   const hud = document.getElementById('hud');
   if (!hud) return;
   if (cameraMode !== 'creative') {
-    hud.textContent = 'Build with: /setblock x y z block_id[prop=val,...] • /fill x1 y1 z1 x2 y2 z2 block_id[prop=val,...] • H toggles heightmaps';
+    hud.textContent = 'Orbit camera';
     return;
   }
   const state = player.flying ? 'Flying' : (player.sneaking ? 'Sneaking' : (player.sprinting ? 'Sprinting' : (player.onGround ? 'Walking' : 'Falling')));
   const pos = `${player.pos.x.toFixed(2)} / ${player.pos.y.toFixed(2)} / ${player.pos.z.toFixed(2)}`;
-  hud.textContent =
-    `Creative — ${state} — XYZ ${pos}\n` +
-    `WASD move • Space ${player.flying ? 'fly up' : 'jump'} • Shift ${player.flying ? 'fly down' : 'sneak'}\n` +
-    `${keyboardLockActive ? 'Ctrl sprint' : 'Ctrl sprint (needs fullscreen)'} • double-W sprint • double-Space flight\n` +
-    `R respawn • Esc release mouse`;
+  hud.textContent = `Creative — ${state} — XYZ ${pos}`;
 }
 
 function updateFovUi(fov) {
@@ -3129,7 +3143,6 @@ document.addEventListener('pointerlockchange', () => {
     clearPlayerInput();
     disableKeyboardLock();
   }
-  updateLockHint();
 });
 
 document.addEventListener('fullscreenchange', () => {
@@ -3229,7 +3242,6 @@ canvas.addEventListener('pointerdown', (e) => {
     setSettingsOpen(false);
     return;
   }
-  if (!mobileImmersive) setMobileImmersive(true);
   e.preventDefault();
   lookPointerId = e.pointerId;
   lookX = e.clientX;
@@ -3263,13 +3275,13 @@ canvas.addEventListener('pointercancel', releaseLook);
 const mobileJump = document.getElementById('mobileJump');
 const mobileSneak = document.getElementById('mobileSneak');
 const mobileSprint = document.getElementById('mobileSprint');
-const mobileMenu = document.getElementById('mobileMenu');
+const mobileFullscreenButton = document.getElementById('mobileFullscreen');
 
-mobileMenu.addEventListener('pointerdown', (e) => {
+mobileFullscreenButton.addEventListener('pointerdown', (e) => {
   if (!IS_TOUCH) return;
   e.preventDefault();
   e.stopPropagation();
-  setMobileImmersive(!mobileImmersive);
+  toggleMobileFullscreen();
 });
 
 mobileJump.addEventListener('pointerdown', (e) => {
@@ -3311,7 +3323,7 @@ mobileSprint.addEventListener('pointerdown', (e) => {
   syncMobileButtons();
 });
 
-if (IS_TOUCH) setMobileImmersive(true);
+if (IS_TOUCH) setMobileFullscreen(false);
 
 
 document.addEventListener('keydown', (e) => {
