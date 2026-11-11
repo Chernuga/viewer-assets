@@ -258,14 +258,23 @@ camera.position.set(6, 6, 6);
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 3.0));
 
+let lastFitW = 0, lastFitH = 0;
 function fitViewer() {
   const w = viewerEl?.clientWidth || window.innerWidth;
   const h = viewerEl?.clientHeight || window.innerHeight;
   if (!w || !h) return;
+  lastFitW = w;
+  lastFitH = h;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 3.0));
   renderer.setSize(w, h, false);
+  renderer.setViewport(0, 0, w, h);
+  renderer.setScissorTest(false);
+}
+function ensureViewport() {
+  if (!viewerEl) return;
+  if (viewerEl.clientWidth !== lastFitW || viewerEl.clientHeight !== lastFitH) fitViewer();
 }
 fitViewer();
 let fitRaf = 0;
@@ -3881,6 +3890,7 @@ function updateLighting() {
 
 function animate() {
   requestAnimationFrame(animate);
+  ensureViewport();
   const delta = Math.min(clock.getDelta(), 0.1);
   gameTime += delta * 20 * CONFIG.animation.shaderSpeed;
   for (const { uniformRef } of timeUniforms) uniformRef.value = gameTime;
