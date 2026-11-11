@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>Voxel Builder â€” Java Edition</title>
+  <title>Voxel Builder — Java Edition</title>
   <style>
     :root { --bg:#071014; --panel: rgba(255,255,255,0.03); --accent:#39ff14 !important; --muted: rgba(255,255,255,0.6); --glass: rgba(255,255,255,0.03); --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; }
     html, body { height:100%; margin:0; background:var(--bg); color:var(--muted); font-family:Inter,system-ui; overflow: hidden; }
@@ -69,7 +69,7 @@
         <div class="setting">
           <div class="setting-head">
             <label for="fovSlider">Field of view</label>
-            <span id="fovValue">70Â°</span>
+            <span id="fovValue">70°</span>
           </div>
           <input id="fovSlider" type="range" min="30" max="110" step="1" value="70" />
         </div>
@@ -1354,7 +1354,7 @@ function updateHeightResUi(index) {
   const value = document.getElementById('heightResValue');
   if (value) {
     value.textContent = HEIGHT_RES_LABELS[i];
-    value.title = `${HEIGHT_RES_OPTIONS[i]}Ã—${HEIGHT_RES_OPTIONS[i]} px per frame`;
+    value.title = `${HEIGHT_RES_OPTIONS[i]}×${HEIGHT_RES_OPTIONS[i]} px per frame`;
   }
 }
 
@@ -1473,7 +1473,7 @@ function updateReflectionButton() {
   btn.classList.toggle('on', reflectionsEnabled);
   btn.classList.toggle('off', !reflectionsEnabled);
   btn.setAttribute('aria-pressed', String(reflectionsEnabled));
-  btn.title = 'Cycle reflections: Off â†’ Normal (full heightmap normals) â†’ Minimal (16Ã— heightmap normals) â†’ Flat (face normals)';
+  btn.title = 'Cycle reflections: Off → Normal (full heightmap normals) → Minimal (16× heightmap normals) → Flat (face normals)';
 }
 
 function initReflectionToggle() {
@@ -3360,14 +3360,14 @@ function updateHud() {
   }
   const state = player.flying ? 'Flying' : (player.sneaking ? 'Sneaking' : (player.sprinting ? 'Sprinting' : (player.onGround ? 'Walking' : 'Falling')));
   const pos = `${player.pos.x.toFixed(2)} / ${player.pos.y.toFixed(2)} / ${player.pos.z.toFixed(2)}`;
-  hud.textContent = `Creative â€” ${state} â€” XYZ ${pos}`;
+  hud.textContent = `Creative — ${state} — XYZ ${pos}`;
 }
 
 function updateFovUi(fov) {
   const slider = document.getElementById('fovSlider');
   if (slider && Number(slider.value) !== fov) slider.value = String(fov);
   const value = document.getElementById('fovValue');
-  if (value) value.textContent = fov + 'Â°';
+  if (value) value.textContent = fov + '°';
 }
 
 function setBaseFov(value, persist = true) {
