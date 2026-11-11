@@ -182,9 +182,10 @@ On touch devices, the viewer switches to Pocket Edition-style controls: a
 left-hand movement joystick, drag-to-look on the canvas, and Jump / Sneak /
 Sprint buttons on the right. Pushing the joystick fully forward auto-sprints.
 Flight is toggled by double-tapping Jump. Pointer lock and fullscreen capture are
-skipped on touch; Sneak and Sprint are toggles. The ⛶ button toggles
-fullscreen on/off: entering hides the editor/settings bar, exiting restores it.
-Opening Settings hides the touch controls.
+skipped on touch; Sneak and Sprint are toggles. Tapping the game canvas or
+joystick enters browser fullscreen; exiting fullscreen with the browser/back
+control restores the editor/settings bar. Opening Settings hides the touch
+controls.
 
 Ctrl+W is a browser-reserved shortcut. Capturing it (and Ctrl+A select-all and
 Ctrl+D bookmarks) uses the Keyboard Lock API, which Chrome only enables in
@@ -211,7 +212,8 @@ vertical impulse with 0.6 drag, and the player auto-steps up 0.6 blocks. The
 hitbox is 0.6x1.8 (1.5 when sneaking) with a 1.62 eye height (1.27 sneaking).
 The crouch eye-height transition is smoothed at render rate instead of ticking
 in 20 Hz steps. Sneaking backs away from ledges, and the FOV widens while flying
-and sprinting.
+and sprinting. A safety floor stops the player at 100 blocks below the lowest
+placed block, so walking off the build cannot drop into an endless fall.
 
 Block collision uses the block model element boxes, so slabs, stairs, fences,
 walls, panes, chests and similar partial blocks have the right shape; plants,

@@ -36,7 +36,6 @@
     .mobile-controls { display:none; position:fixed; inset:0; z-index:25; pointer-events:none; user-select:none; -webkit-user-select:none; }
     body.touch .mobile-controls.visible { display:block; }
     body.touch.mobile-fullscreen .top { display:none; }
-    #mobileFullscreen { position:absolute; right:0; bottom:92px; width:52px; height:44px; border-radius:12px; font-size:18px; line-height:1; }
     .joystick { position:absolute; left:max(18px, env(safe-area-inset-left)); bottom:max(18px, env(safe-area-inset-bottom)); width:128px; height:128px; border-radius:50%; border:1px solid rgba(255,255,255,0.22); background:radial-gradient(circle, rgba(255,255,255,0.06) 0 42%, rgba(0,0,0,0.18) 43% 100%); box-shadow:0 0 0 7px rgba(0,0,0,0.10), inset 0 0 20px rgba(0,0,0,0.22); pointer-events:auto; touch-action:none; }
     .joystick-knob { position:absolute; left:36px; top:36px; width:56px; height:56px; border-radius:50%; background:rgba(220,255,215,0.22); border:1px solid rgba(220,255,215,0.58); box-shadow:0 2px 10px rgba(0,0,0,0.35); transform:translate(0,0); pointer-events:none; }
     .mobile-actions { position:absolute; right:max(18px, env(safe-area-inset-right)); bottom:max(18px, env(safe-area-inset-bottom)); width:136px; height:190px; pointer-events:none; }
@@ -103,7 +102,6 @@
         <button id="mobileSprint" class="mobile-btn" type="button" aria-label="Toggle sprint">Sprint</button>
         <button id="mobileSneak" class="mobile-btn" type="button" aria-label="Toggle sneak">Sneak</button>
         <button id="mobileJump" class="mobile-btn" type="button" aria-label="Jump or fly up">Jump</button>
-        <button id="mobileFullscreen" class="mobile-btn" type="button" aria-label="Toggle fullscreen">⛶</button>
       </div>
     </div>
     <div class="hud" id="hud"></div>
@@ -2792,6 +2790,18 @@ function physicsTick() {
   if (Math.abs(player.vel.y) < 0.005) player.vel.y = 0;
   if (Math.abs(player.vel.z) < 0.005) player.vel.z = 0;
 
+  // Hard safety floor: never fall more than 100 blocks below the lowest
+  // placed block, even if the build has an edge/void.
+  if (worldBounds && isFinite(worldBounds.minY)) {
+    const fallLimit = worldBounds.minY - 100;
+    if (player.pos.y < fallLimit) {
+      player.pos.y = fallLimit;
+      player.prevPos.y = Math.max(player.prevPos.y, fallLimit);
+      player.vel.y = 0;
+      player.yCollided = true;
+    }
+  }
+
   // Creative flight is cancelled when the player descends onto a surface.
   if (wasFlying && player.flying && !wasOnGround && player.onGround && preMoveVy < 0) {
     player.flying = false;
@@ -2864,7 +2874,6 @@ function syncMobileButtons() {
   const jump = document.getElementById('mobileJump');
   const sneak = document.getElementById('mobileSneak');
   const sprint = document.getElementById('mobileSprint');
-  const fullscreen = document.getElementById('mobileFullscreen');
   if (jump) jump.classList.toggle('active', playerInput.jump);
   if (sneak) {
     sneak.classList.toggle('active', playerInput.sneak);
@@ -2873,12 +2882,6 @@ function syncMobileButtons() {
   if (sprint) {
     sprint.classList.toggle('active', playerInput.sprint);
     sprint.setAttribute('aria-pressed', String(playerInput.sprint));
-  }
-  if (fullscreen) {
-    const on = !!document.fullscreenElement || mobileFullscreen;
-    fullscreen.textContent = on ? '⤢' : '⛶';
-    fullscreen.setAttribute('aria-pressed', String(on));
-    fullscreen.setAttribute('aria-label', on ? 'Exit fullscreen' : 'Enter fullscreen');
   }
 }
 
@@ -2901,22 +2904,12 @@ function setMobileFullscreen(on) {
   window.dispatchEvent(new Event('resize'));
 }
 
-function toggleMobileFullscreen() {
-  if (!IS_TOUCH) return;
-  if (document.fullscreenElement) {
-    document.exitFullscreen()
-      .catch(() => setMobileFullscreen(false));
-    return;
-  }
-  if (document.documentElement.requestFullscreen) {
-    document.documentElement.requestFullscreen()
-      .then(() => setMobileFullscreen(true))
-      .catch(() => setMobileFullscreen(!mobileFullscreen));
-  } else {
-    // iOS Safari does not expose element fullscreen; still give a full-screen
-    // layout by hiding the editor bar.
-    setMobileFullscreen(!mobileFullscreen);
-  }
+function requestMobileFullscreen() {
+  if (!IS_TOUCH || document.fullscreenElement) return;
+  if (!document.documentElement.requestFullscreen) return;
+  document.documentElement.requestFullscreen()
+    .then(() => setMobileFullscreen(true))
+    .catch(() => { /* fullscreen requires a user gesture / may be denied */ });
 }
 
 document.addEventListener('fullscreenchange', () => {
@@ -3214,6 +3207,7 @@ function updateJoystickFromPointer(e) {
 
 joystickEl.addEventListener('pointerdown', (e) => {
   if (!IS_TOUCH) return;
+  requestMobileFullscreen();
   e.preventDefault();
   e.stopPropagation();
   joystickPointerId = e.pointerId;
@@ -3242,6 +3236,7 @@ canvas.addEventListener('pointerdown', (e) => {
     setSettingsOpen(false);
     return;
   }
+  requestMobileFullscreen();
   e.preventDefault();
   lookPointerId = e.pointerId;
   lookX = e.clientX;
@@ -3275,17 +3270,10 @@ canvas.addEventListener('pointercancel', releaseLook);
 const mobileJump = document.getElementById('mobileJump');
 const mobileSneak = document.getElementById('mobileSneak');
 const mobileSprint = document.getElementById('mobileSprint');
-const mobileFullscreenButton = document.getElementById('mobileFullscreen');
-
-mobileFullscreenButton.addEventListener('pointerdown', (e) => {
-  if (!IS_TOUCH) return;
-  e.preventDefault();
-  e.stopPropagation();
-  toggleMobileFullscreen();
-});
 
 mobileJump.addEventListener('pointerdown', (e) => {
   if (!IS_TOUCH) return;
+  requestMobileFullscreen();
   e.preventDefault();
   e.stopPropagation();
   if (!playerInput.jump) playerInput.jumpEdge = true;
@@ -3304,6 +3292,7 @@ mobileJump.addEventListener('pointerleave', releaseMobileJump);
 
 mobileSneak.addEventListener('pointerdown', (e) => {
   if (!IS_TOUCH) return;
+  requestMobileFullscreen();
   e.preventDefault();
   e.stopPropagation();
   playerInput.sneak = !playerInput.sneak;
@@ -3312,6 +3301,7 @@ mobileSneak.addEventListener('pointerdown', (e) => {
 
 mobileSprint.addEventListener('pointerdown', (e) => {
   if (!IS_TOUCH) return;
+  requestMobileFullscreen();
   e.preventDefault();
   e.stopPropagation();
   mobileSprintToggle = !mobileSprintToggle;
