@@ -2378,7 +2378,13 @@ async function getBlockModels(blockId, properties, pos) {
       for (const k in vProps) if (String(filledProps[k]) !== vProps[k]) { ok = false; break; }
       if (ok) { const score = Object.keys(vProps).length; if (score > bestScore) { bestScore = score; best = stateData.variants[vk]; } }
     }
-    if (!best) best = stateData.variants[Object.keys(stateData.variants)[0]];
+    if (!best) {
+      // Never silently choose the first variant: for stairs that can be an
+      // inner-left corner. Prefer a straight/default variant instead.
+      const entries = Object.entries(stateData.variants);
+      const straight = entries.find(([k]) => !k.includes('shape=') || k.includes('shape=straight'));
+      best = (straight || entries[0])?.[1];
+    }
     if (best) {
       let chosen;
       if (Array.isArray(best)) {
