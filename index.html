@@ -2046,7 +2046,7 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
     // Blockstate uvlock keeps textures aligned to the world when the model is
     // rotated. Without it, stairs and other rotated models show sideways UVs.
     if (uvLock && (rotX || rotY)) {
-      const angle = THREE.MathUtils.degToRad(-(rotX + rotY));
+      const angle = THREE.MathUtils.degToRad(rotX + rotY);
       const cos = Math.cos(angle), sin = Math.sin(angle);
       quadUVs = quadUVs.map(([u, v]) => {
         const x = u - 0.5, y = v - 0.5;
