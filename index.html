@@ -247,13 +247,27 @@ async function fetchLatestCommitSha() {
 }
 
 const canvas = document.getElementById('webgl-canvas');
+const viewerEl = document.querySelector('.viewer');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x071014);
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 5000);
+const initialWidth = viewerEl?.clientWidth || window.innerWidth;
+const initialHeight = viewerEl?.clientHeight || window.innerHeight;
+const camera = new THREE.PerspectiveCamera(50, initialWidth / initialHeight, 0.1, 5000);
 camera.position.set(6, 6, 6);
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 3.0));
-renderer.setSize(window.innerWidth, window.innerHeight);
+
+function fitViewer() {
+  const w = viewerEl?.clientWidth || window.innerWidth;
+  const h = viewerEl?.clientHeight || window.innerHeight;
+  if (!w || !h) return;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+}
+fitViewer();
+window.addEventListener('resize', fitViewer);
+document.addEventListener('fullscreenchange', () => requestAnimationFrame(fitViewer));
 
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
 scene.add(ambientLight);
@@ -3874,7 +3888,7 @@ document.getElementById('renderBtn').addEventListener('click', () => { setSettin
 document.getElementById('heightmapBtn').addEventListener('click', () => { setHeightMapsEnabled(!heightMapsEnabled); });
 document.getElementById('reflectionsBtn').addEventListener('click', () => { cycleReflectionMode(); });
 document.getElementById('refreshShaBtn').addEventListener('click', () => { setSettingsOpen(false); forceRefreshSha(); });
-window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+
 
 (async () => {
   const sha = await fetchLatestCommitSha();
