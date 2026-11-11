@@ -1,4 +1,4 @@
-﻿{
+{
   "sky": {
     "stateCount": 8,
     "stateDuration": 10,
@@ -49,6 +49,7 @@
     "concurrency": 120,
     "heightMap": true,
     "reflections": false,
+    "sideReflections": true,
     "reflectionStrength": 0.5,
     "reflectionType": "normal",
     "heightMapGamma": 1.0,

@@ -65,6 +65,7 @@
       <button id="settingsBtn" class="btn" aria-expanded="false" aria-controls="settingsPanel">Settings</button>
       <div id="settingsPanel" class="settings-panel" aria-hidden="true">
         <button id="reflectionsBtn" class="btn toggle off" aria-pressed="false">Reflections: Off</button>
+        <button id="sideReflectionsBtn" class="btn toggle on" aria-pressed="true">Side reflections: On</button>
         <div class="setting">
           <div class="setting-head">
             <label for="fovSlider">Field of view</label>
@@ -324,7 +325,9 @@ let celestialDirty = true;
 const REFLECTION_STORAGE_KEY = 'voxelBuilderReflectionsEnabled';
 const REFLECTION_STRENGTH_KEY = 'voxelBuilderReflectionStrength';
 const REFLECTION_MODE_KEY = 'voxelBuilderReflectionMode';
+const SIDE_REFLECTIONS_STORAGE_KEY = 'voxelBuilderSideReflections';
 const DEFAULT_REFLECTION_STRENGTH = 0.2;
+let sideReflectionsEnabled = true;
 let reflectionMode = 'off';
 let reflectionsEnabled = false;
 let reflectionStrengthScale = 0.5;
@@ -1088,6 +1091,7 @@ function patchHeightMaterial(material, allowHeightRelief = false) {
     shader.uniforms.uHeightNormalStrength = { value: (CONFIG.render.heightMapNormalStrength ?? 2.4) };
     shader.uniforms.uHeightSun = heightSunDir;
     shader.uniforms.uReflectionMode = { value: reflectionModeValue() };
+    shader.uniforms.uSideReflections = { value: sideReflectionsEnabled ? 1 : 0 };
     shader.uniforms.uReflectionStrength = {
       value: reflectionsEnabled
         ? (material.userData.reflectionStrength ?? DEFAULT_REFLECTION_STRENGTH) * reflectionStrengthScale
@@ -1137,6 +1141,7 @@ uniform float uHeightEdgeThreshold;
 uniform float uHeightLift;
 uniform float uHeightNormalStrength;
 uniform float uReflectionMode;
+uniform float uSideReflections;
 uniform float uReflectionStrength;
 uniform samplerCube uCelestialMap;
 uniform float uCelestialStrength;
@@ -1256,18 +1261,23 @@ if (uHeightEnabled > 0.5) {
       '#include <envmap_fragment>',
       `#ifdef USE_ENVMAP
   if (uReflectionMode > 0.5 && uReflectionStrength > 0.0) {
-    vec3 surfaceNormal = normalize(
-      uReflectionMode > 2.5 ? gMinimalNormal :
-      (uReflectionMode > 1.5 ? normal : gFaceNormal));
+    vec3 worldFaceNormal = normalize( ( vec4( gFaceNormal, 0.0 ) * viewMatrix ).xyz );
+    float sideFace = 1.0 - smoothstep(0.35, 0.65, abs(worldFaceNormal.y));
+    vec3 surfaceNormal = sideFace > 0.5
+      ? gFaceNormal
+      : normalize(uReflectionMode > 2.5 ? gMinimalNormal :
+        (uReflectionMode > 1.5 ? normal : gFaceNormal));
     vec3 worldNormal = normalize( ( vec4( surfaceNormal, 0.0 ) * viewMatrix ).xyz );
     vec3 cameraToFrag = normalize( vReflectWorldPos - cameraPosition );
     vec3 reflectionDir = reflect( cameraToFrag, worldNormal );
     vec3 cubeUv = vec3( flipEnvMap * reflectionDir.x, reflectionDir.yz );
     vec4 reflectionColor = textureCube( envMap, cubeUv );
     float reflectionAmount = clamp( specularStrength * uReflectionStrength, 0.0, 1.0 );
+    if (sideFace > 0.5 && uSideReflections < 0.5) reflectionAmount = 0.0;
     outgoingLight = mix( outgoingLight, reflectionColor.rgb, reflectionAmount );
     vec3 celestialColor = textureCube( uCelestialMap, cubeUv ).rgb;
-    outgoingLight += celestialColor * specularStrength * uCelestialStrength;
+    outgoingLight += celestialColor * specularStrength * uCelestialStrength *
+      (sideFace > 0.5 && uSideReflections < 0.5 ? 0.0 : 1.0);
   }
 #endif`
     );
@@ -1402,6 +1412,33 @@ function initReflectionStrength() {
     ? saved
     : (Number.isFinite(CONFIG.render.reflectionStrength) ? CONFIG.render.reflectionStrength * 100 : 50);
   setReflectionStrengthPercent(percent, false);
+}
+
+function updateSideReflectionButton() {
+  const btn = document.getElementById('sideReflectionsBtn');
+  if (!btn) return;
+  btn.textContent = `Side reflections: ${sideReflectionsEnabled ? 'On' : 'Off'}`;
+  btn.classList.toggle('on', sideReflectionsEnabled);
+  btn.classList.toggle('off', !sideReflectionsEnabled);
+  btn.setAttribute('aria-pressed', String(sideReflectionsEnabled));
+  btn.title = 'Toggle reflections on vertical side faces; they use the flat face normal and ignore heightmap normals';
+}
+
+function initSideReflections() {
+  const saved = localStorage.getItem(SIDE_REFLECTIONS_STORAGE_KEY);
+  const enabled = saved === null ? CONFIG.render.sideReflections !== false : saved === '1';
+  setSideReflectionsEnabled(enabled, false);
+}
+
+function setSideReflectionsEnabled(enabled, persist = true) {
+  sideReflectionsEnabled = !!enabled;
+  CONFIG.render.sideReflections = sideReflectionsEnabled;
+  if (persist) localStorage.setItem(SIDE_REFLECTIONS_STORAGE_KEY, sideReflectionsEnabled ? '1' : '0');
+  updateSideReflectionButton();
+  for (const material of blockMaterialCache.values()) {
+    const u = material.userData.heightUniforms;
+    if (u?.uSideReflections) u.uSideReflections.value = sideReflectionsEnabled ? 1 : 0;
+  }
 }
 
 function updateReflectionButton() {
@@ -3877,6 +3914,7 @@ async function forceRefreshSha() {
   initHeightmapToggle();
   initReflectionStrength();
   initReflectionToggle();
+  initSideReflections();
   initPlayerController();
   await setupSky();
   await setupCelestialBodies();
@@ -3887,6 +3925,9 @@ async function forceRefreshSha() {
 document.getElementById('renderBtn').addEventListener('click', () => { setSettingsOpen(false); saveCommandsToStorage(); build(); });
 document.getElementById('heightmapBtn').addEventListener('click', () => { setHeightMapsEnabled(!heightMapsEnabled); });
 document.getElementById('reflectionsBtn').addEventListener('click', () => { cycleReflectionMode(); });
+document.getElementById('sideReflectionsBtn').addEventListener('click', () => {
+  setSideReflectionsEnabled(!sideReflectionsEnabled, true);
+});
 document.getElementById('refreshShaBtn').addEventListener('click', () => { setSettingsOpen(false); forceRefreshSha(); });
 
 
@@ -3900,6 +3941,7 @@ document.getElementById('refreshShaBtn').addEventListener('click', () => { setSe
   initHeightmapToggle();
   initReflectionStrength();
   initReflectionToggle();
+  initSideReflections();
   initPlayerController();
   await setupSky();
   await setupCelestialBodies();
