@@ -2879,10 +2879,17 @@ function physicsTick() {
   ];
   const bodyPropsList = bodyIds.map(blockPhysics).filter(Boolean);
   const bodyProps = bodyPropsList[0] || null;
+  const WATER_PLANT_CLASSES = new Set([
+    'KelpBlock', 'KelpPlantBlock', 'SeagrassBlock', 'TallSeagrassBlock',
+    'BaseCoralPlantBlock', 'BaseCoralFanBlock', 'BaseCoralWallFanBlock',
+    'CoralPlantBlock', 'CoralFanBlock', 'CoralWallFanBlock',
+  ]);
   const inWeb = bodyPropsList.some(p => p.class === 'WebBlock');
-  const inWater = bodyIds.some(id => id === 'water') || bodyPropsList.some(p => p.class === 'LiquidBlock' && p.light !== 15);
+  const inWater = bodyIds.some(id => id === 'water')
+    || bodyPropsList.some(p => (p.class === 'LiquidBlock' && p.light !== 15) || WATER_PLANT_CLASSES.has(p.class));
   const inLava = bodyIds.some(id => id === 'lava') || bodyPropsList.some(p => p.class === 'LiquidBlock' && p.light === 15);
   const inPowder = bodyPropsList.some(p => p.class === 'PowderSnowBlock');
+  const inBerry = bodyPropsList.some(p => p.class === 'SweetBerryBushBlock');
   const climbable = bodyPropsList.some(p => p.climbable);
   const speedCandidates = [supportProps, ...bodyPropsList]
     .filter(p => p && p.class !== 'AirBlock')
@@ -2966,6 +2973,9 @@ function physicsTick() {
   } else if (inPowder) {
     player.vel.x *= 0.7;
     player.vel.z *= 0.7;
+  } else if (inBerry) {
+    player.vel.x *= 0.6;
+    player.vel.z *= 0.6;
   }
 
   if (bodyPropsList.some(p => p.class === 'BubbleColumnBlock')) {
