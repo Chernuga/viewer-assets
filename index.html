@@ -1586,6 +1586,20 @@ const PREFERRED_DEFAULTS = ['y','north','bottom','up','false','none','straight',
 
 const BOOLEAN_TRUE_BLOCKS = new Set(['fire', 'soul_fire']);
 
+function collectConditionProps(cond, propValues) {
+  if (!cond || typeof cond !== 'object') return;
+  if (Array.isArray(cond.AND)) { for (const c of cond.AND) collectConditionProps(c, propValues); return; }
+  if (Array.isArray(cond.OR)) { for (const c of cond.OR) collectConditionProps(c, propValues); return; }
+  if (cond.NOT) { collectConditionProps(cond.NOT, propValues); return; }
+  for (const k in cond) {
+    if (k === 'AND' || k === 'OR' || k === 'NOT') continue;
+    const v = cond[k];
+    if (!propValues[k]) propValues[k] = new Set();
+    if (Array.isArray(v)) v.forEach(x => propValues[k].add(String(x)));
+    else propValues[k].add(String(v));
+  }
+}
+
 function computeDefaultProperties(stateData, blockId) {
   const cleanId = (blockId || '').replace('minecraft:', '');
   const preferTrue = BOOLEAN_TRUE_BLOCKS.has(cleanId);
@@ -1605,14 +1619,7 @@ function computeDefaultProperties(stateData, blockId) {
   }
   if (stateData.multipart) {
     for (const part of stateData.multipart) {
-      if (!part.when) continue;
-      const conds = part.when.OR ? part.when.OR : [part.when];
-      for (const cond of conds) for (const k in cond) {
-        const v = cond[k];
-        if (!propValues[k]) propValues[k] = new Set();
-        if (Array.isArray(v)) v.forEach(x => propValues[k].add(String(x)));
-        else propValues[k].add(String(v));
-      }
+      if (part.when) collectConditionProps(part.when, propValues);
     }
   }
   const defaults = {};
@@ -2494,11 +2501,7 @@ async function getBlockModels(blockId, properties, pos) {
   } else if (stateData.multipart) {
     for (const part of stateData.multipart) {
       let match = true;
-      if (part.when) {
-        match = false;
-        if (part.when.OR) match = part.when.OR.some(c => matchesCondition(c, filledProps));
-        else match = matchesCondition(part.when, filledProps);
-      }
+      if (part.when) match = matchesCondition(part.when, filledProps);
       if (match && part.apply) {
         const apps = Array.isArray(part.apply) ? part.apply : [part.apply];
         for (const app of apps) modelApps.push({ model: app.model, x: app.x || 0, y: app.y || 0, uvlock: !!app.uvlock });
@@ -2523,7 +2526,12 @@ async function getBlockModels(blockId, properties, pos) {
 }
 
 function matchesCondition(cond, props) {
+  if (!cond || typeof cond !== 'object') return true;
+  if (Array.isArray(cond.AND)) return cond.AND.every(c => matchesCondition(c, props));
+  if (Array.isArray(cond.OR)) return cond.OR.some(c => matchesCondition(c, props));
+  if (cond.NOT) return !matchesCondition(cond.NOT, props);
   for (const k in cond) {
+    if (k === 'AND' || k === 'OR' || k === 'NOT') continue;
     const val = cond[k];
     if (typeof val === 'string') { if (String(props[k]) !== val) return false; }
     else if (Array.isArray(val)) { if (!val.includes(String(props[k]))) return false; }
