@@ -3,6 +3,10 @@
 Procedural heightmaps are generated from each block texture at runtime; no
 ready-made PBR/heightmap assets and no normal-map textures are used.
 
+The `minecraft/` asset tree is mirrored from the installed **Minecraft 26.3**
+release jar. Viewer-only shaders under `shaders/viewer/` and the custom
+environment sky are preserved.
+
 **Toggle:** in the **Settings** menu, the `Heightmaps: On/Off` button (or `H`)
 switches the heightmap shading live. The choice is stored in `localStorage`; the
 default comes from `viewer/config.json` -> `render.heightMap`.

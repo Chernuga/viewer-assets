@@ -10,6 +10,11 @@
         "texture": "minecraft:diamond"
       }
     ],
+    "humanoid_baby": [
+      {
+        "texture": "minecraft:diamond"
+      }
+    ],
     "humanoid_leggings": [
       {
         "texture": "minecraft:diamond"
@@ -20,5 +25,13 @@
         "texture": "minecraft:diamond"
       }
     ]
-  }
+  },
+  "trim_overrides": [
+    {
+      "palette": "minecraft:trim/diamond_darker",
+      "when": {
+        "material": "minecraft:diamond"
+      }
+    }
+  ]
 }

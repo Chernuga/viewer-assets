@@ -1579,9 +1579,15 @@ function getDefaultProperties(stateData, blockId) {
 }
 
 function resolveTexture(ref, textures) {
-  let current = ref, depth = 10;
-  while (current && current.startsWith('#') && depth-- > 0) current = textures[current.substring(1)];
-  return current || 'block/missing';
+  const valueOf = (value) => {
+    while (value && typeof value === 'object') value = value.sprite ?? value.texture ?? null;
+    return value;
+  };
+  let current = valueOf(ref), depth = 10;
+  while (typeof current === 'string' && current.startsWith('#') && depth-- > 0) {
+    current = valueOf(textures[current.substring(1)]);
+  }
+  return typeof current === 'string' ? current : 'block/missing';
 }
 
 function getDefaultUV(face, from, to) {

@@ -10,6 +10,11 @@
         "texture": "minecraft:iron"
       }
     ],
+    "humanoid_baby": [
+      {
+        "texture": "minecraft:iron"
+      }
+    ],
     "humanoid_leggings": [
       {
         "texture": "minecraft:iron"
@@ -20,5 +25,13 @@
         "texture": "minecraft:iron"
       }
     ]
-  }
+  },
+  "trim_overrides": [
+    {
+      "palette": "minecraft:trim/iron_darker",
+      "when": {
+        "material": "minecraft:iron"
+      }
+    }
+  ]
 }

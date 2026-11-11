@@ -1,26 +1,33 @@
 #version 330
+#extension GL_ARB_separate_shader_objects : require
 
-#moj_import <minecraft:fog.glsl>
-#moj_import <minecraft:globals.glsl>
-#moj_import <minecraft:chunksection.glsl>
-#moj_import <minecraft:projection.glsl>
+#include <minecraft:fog.glsl>
+#include <minecraft:globals.glsl>
+#include <minecraft:projection.glsl>
+#include <minecraft:sample_lightmap.glsl>
+#include <minecraft:terrainglobals.glsl>
+#ifndef MULTIDRAW_TERRAIN
+    #include <minecraft:chunksection.glsl>
+#endif
 
-in vec3 Position;
-in vec4 Color;
-in vec2 UV0;
-in ivec2 UV2;
-in vec3 Normal;
+layout(location = 0) in vec3 Position;
+layout(location = 1) in vec4 Color;
+layout(location = 2) in vec2 UV0;
+layout(location = 3) in ivec2 UV2;
+#ifdef MULTIDRAW_TERRAIN
+layout(location = 4) in ivec3 ChunkPosition;
+layout(location = 5) in float ChunkVisibility;
+#endif
 
+#ifndef OIT_ALPHA_ONLY
 uniform sampler2D Sampler2;
+#endif
 
-out float sphericalVertexDistance;
-out float cylindricalVertexDistance;
-out vec4 vertexColor;
-out vec2 texCoord0;
-
-vec4 minecraft_sample_lightmap(sampler2D lightMap, ivec2 uv) {
-    return texture(lightMap, clamp((uv / 256.0) + 0.5 / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
-}
+layout(location = 0) out float sphericalVertexDistance;
+layout(location = 1) out float cylindricalVertexDistance;
+layout(location = 2) out vec4 vertexColor;
+layout(location = 3) out vec2 texCoord0;
+layout(location = 4) out float chunkVisibility;
 
 void main() {
     vec3 pos = Position + (ChunkPosition - CameraBlockPos) + CameraOffset;
@@ -28,6 +35,14 @@ void main() {
 
     sphericalVertexDistance = fog_spherical_distance(pos);
     cylindricalVertexDistance = fog_cylindrical_distance(pos);
-    vertexColor = Color * minecraft_sample_lightmap(Sampler2, UV2);
+    #ifndef OIT_ALPHA_ONLY
+    vertexColor = Color * sample_lightmap(Sampler2, UV2);
+    #else
+    vertexColor = Color;
+    #endif
     texCoord0 = UV0;
+
+    const float chunkFullyVisibleRange = 16.0;
+    float dist = length(pos);
+    chunkVisibility = mix(1.0, ChunkVisibility, clamp((dist - chunkFullyVisibleRange) / chunkFullyVisibleRange, 0.0, 1.0));
 }
