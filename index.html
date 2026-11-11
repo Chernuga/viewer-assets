@@ -262,7 +262,7 @@ function resizeRenderer() {
   if (!w || !h) return;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 3.0));
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
   renderer.setSize(w, h);
 }
 resizeRenderer();
