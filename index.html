@@ -54,6 +54,25 @@
     }
     body.play #webgl-canvas { cursor:crosshair; }
     .error-overlay { position:absolute; top:10px; right:10px; max-width:400px; max-height:300px; overflow:auto; background:rgba(255,0,0,0.1); border:1px solid rgba(255,0,0,0.3); border-radius:8px; padding:8px; font-size:12px; color:#ff9999; display:none; z-index:20; white-space:pre-wrap; word-break:break-all; }
+    .creative-bar { position:absolute; left:50%; bottom:14px; transform:translateX(-50%); display:flex; gap:5px; padding:5px; border-radius:12px; background:rgba(4,12,16,0.72); border:1px solid rgba(57,255,20,0.18); box-shadow:0 8px 30px rgba(0,0,0,0.45); backdrop-filter:blur(8px); z-index:14; pointer-events:auto; }
+    .creative-slot, .creative-add { width:44px; height:44px; padding:0; border-radius:8px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:#eaffea; cursor:pointer; position:relative; overflow:hidden; }
+    .creative-slot img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .creative-slot.selected { border-color:#39ff14; box-shadow:0 0 0 2px rgba(57,255,20,0.35) inset; }
+    .creative-slot .slot-num { position:absolute; left:3px; top:1px; font:10px/1 var(--mono); color:rgba(255,255,255,0.65); }
+    .creative-add { font:700 20px/1 var(--mono); color:#b8ffb0; }
+    .inventory-overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.62); backdrop-filter:blur(3px); z-index:60; }
+    .inventory-overlay.open { display:flex; }
+    .inventory-panel { width:min(760px,94vw); height:min(620px,86vh); display:flex; flex-direction:column; gap:10px; padding:14px; border-radius:14px; background:rgba(8,20,24,0.98); border:1px solid rgba(57,255,20,0.25); box-shadow:0 24px 70px rgba(0,0,0,0.65); }
+    .inventory-head { display:flex; align-items:center; gap:10px; }
+    .inventory-head strong { color:#eaffea; font-size:16px; flex:0 0 auto; }
+    #inventorySearch { flex:1; min-width:0; padding:9px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#eaffea; outline:none; }
+    #inventoryClose { width:34px; height:34px; border-radius:8px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:#ffb3b3; cursor:pointer; font-size:18px; }
+    .inventory-grid { flex:1; overflow:auto; display:grid; grid-template-columns:repeat(auto-fill, minmax(54px, 1fr)); gap:6px; align-content:start; padding-right:4px; }
+    .inventory-item { min-height:54px; padding:3px; border-radius:7px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.03); color:#cfe8d0; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; font:9px/1.1 var(--mono); overflow:hidden; }
+    .inventory-item:hover { border-color:rgba(57,255,20,0.55); background:rgba(57,255,20,0.10); }
+    .inventory-item img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .inventory-item span { width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    body.touch .creative-bar { bottom:8px; }
   </style>
 </head>
 <body>
@@ -96,6 +115,17 @@
   <div class="viewer">
     <canvas id="webgl-canvas"></canvas>
     <div id="crosshair"></div>
+    <div id="creativeBar" class="creative-bar" aria-label="Creative hotbar"></div>
+    <div id="inventoryOverlay" class="inventory-overlay" aria-hidden="true">
+      <div class="inventory-panel">
+        <div class="inventory-head">
+          <strong>Creative Inventory</strong>
+          <input id="inventorySearch" type="search" placeholder="Search blocks…" autocomplete="off" />
+          <button id="inventoryClose" type="button" aria-label="Close inventory">×</button>
+        </div>
+        <div id="inventoryGrid" class="inventory-grid"></div>
+      </div>
+    </div>
     <div id="mobileControls" class="mobile-controls" aria-hidden="true">
       <div id="joystick" class="joystick" aria-label="Movement joystick">
         <div id="joystickKnob" class="joystick-knob"></div>
@@ -3518,6 +3548,148 @@ function setCameraMode(mode, requestLock = true) {
   updateMobileControls();
 }
 
+const CREATIVE_HOTBAR_DEFAULT = [
+  'stone', 'oak_planks', 'cobblestone', 'dirt', 'oak_log',
+  'glass', 'oak_stairs', 'torch', 'grass_block',
+];
+let creativeHotbar = CREATIVE_HOTBAR_DEFAULT.slice();
+let creativeSlot = 0;
+let creativeSelectedBlock = creativeHotbar[0];
+let creativeInventoryOpen = false;
+const creativeIconCache = new Map();
+
+function creativeLabel(id) {
+  return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+async function creativeIconUrl(id) {
+  if (creativeIconCache.has(id)) return creativeIconCache.get(id);
+  let url = null;
+  try {
+    const stateData = await loadBlockstate(id);
+    const refs = [];
+    if (stateData.variants) {
+      for (const v of Object.values(stateData.variants)) {
+        for (const a of (Array.isArray(v) ? v : [v])) if (a?.model) refs.push(a.model);
+      }
+    }
+    for (const part of stateData.multipart || []) {
+      const ap = part.apply; for (const a of (Array.isArray(ap) ? ap : [ap])) if (a?.model) refs.push(a.model);
+    }
+    for (const ref of refs.slice(0, 3)) {
+      const data = await loadModel(ref);
+      if (!data?.textures) continue;
+      const preferred = data.textures.particle || data.textures.all ||
+        data.textures.side || data.textures.top || Object.values(data.textures)[0];
+      const tex = resolveTexture(preferred, data.textures);
+      if (tex && tex !== 'block/missing') {
+        url = `${ASSET_BASE}/textures/${tex}.png`;
+        break;
+      }
+    }
+  } catch (err) { /* leave placeholder */ }
+  creativeIconCache.set(id, url);
+  return url;
+}
+
+function renderCreativeHotbar() {
+  const bar = document.getElementById('creativeBar');
+  if (!bar) return;
+  bar.textContent = '';
+  creativeHotbar.forEach((id, index) => {
+    const slot = document.createElement('button');
+    slot.type = 'button';
+    slot.className = 'creative-slot' + (index === creativeSlot ? ' selected' : '');
+    slot.title = `${index + 1}: ${creativeLabel(id)}`;
+    const num = document.createElement('span');
+    num.className = 'slot-num'; num.textContent = String(index + 1);
+    const img = document.createElement('img');
+    img.alt = '';
+    creativeIconUrl(id).then(url => { if (url) img.src = url; });
+    slot.append(num, img);
+    slot.addEventListener('click', () => {
+      creativeSlot = index;
+      creativeSelectedBlock = id;
+      renderCreativeHotbar();
+    });
+    bar.appendChild(slot);
+  });
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'creative-add';
+  add.title = 'Open creative inventory (E)';
+  add.textContent = '+';
+  add.addEventListener('click', openCreativeInventory);
+  bar.appendChild(add);
+}
+
+function renderCreativeInventory(filter = '') {
+  const grid = document.getElementById('inventoryGrid');
+  if (!grid) return;
+  const query = filter.trim().toLowerCase();
+  const ids = Object.keys(blockProperties)
+    .filter(id => id !== 'air' && (!query || id.includes(query)))
+    .sort();
+  grid.textContent = '';
+  if (!ids.length) {
+    const empty = document.createElement('div');
+    empty.className = 'inventory-item';
+    empty.textContent = blockPropertiesReady ? 'No blocks' : 'Loading blocks…';
+    grid.appendChild(empty);
+    return;
+  }
+  for (const id of ids) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'inventory-item';
+    item.title = id;
+    const img = document.createElement('img');
+    img.alt = ''; img.loading = 'lazy';
+    creativeIconUrl(id).then(url => { if (url) img.src = url; else img.style.display = 'none'; });
+    const label = document.createElement('span');
+    label.textContent = creativeLabel(id);
+    item.append(img, label);
+    item.addEventListener('click', () => {
+      creativeHotbar[creativeSlot] = id;
+      creativeSelectedBlock = id;
+      renderCreativeHotbar();
+      closeCreativeInventory();
+    });
+    grid.appendChild(item);
+  }
+}
+
+function openCreativeInventory() {
+  creativeInventoryOpen = true;
+  const overlay = document.getElementById('inventoryOverlay');
+  if (!overlay) return;
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+  document.exitPointerLock?.();
+  const search = document.getElementById('inventorySearch');
+  if (search) { search.value = ''; setTimeout(() => search.focus(), 0); }
+  renderCreativeInventory();
+}
+
+function closeCreativeInventory() {
+  creativeInventoryOpen = false;
+  const overlay = document.getElementById('inventoryOverlay');
+  if (overlay) {
+    overlay.classList.remove('open');
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function initCreativeUI() {
+  renderCreativeHotbar();
+  const close = document.getElementById('inventoryClose');
+  if (close) close.addEventListener('click', closeCreativeInventory);
+  const overlay = document.getElementById('inventoryOverlay');
+  if (overlay) overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) closeCreativeInventory(); });
+  const search = document.getElementById('inventorySearch');
+  if (search) search.addEventListener('input', () => renderCreativeInventory(search.value));
+}
+
 function updateHud() {
   const hud = document.getElementById('hud');
   if (!hud) return;
@@ -3579,6 +3751,25 @@ window.addEventListener('keydown', (e) => {
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
 
   if (e.code === 'KeyH' && !e.repeat) setHeightMapsEnabled(!heightMapsEnabled);
+
+  if (creativeInventoryOpen) {
+    if (e.code === 'Escape') closeCreativeInventory();
+    return;
+  }
+  if (e.code === 'KeyE' && !e.repeat && cameraMode === 'creative') {
+    openCreativeInventory();
+    return;
+  }
+  const digit = /^Digit([1-9])$/.exec(e.code);
+  if (digit && cameraMode === 'creative') {
+    const index = Number(digit[1]) - 1;
+    if (index < creativeHotbar.length) {
+      creativeSlot = index;
+      creativeSelectedBlock = creativeHotbar[index];
+      renderCreativeHotbar();
+    }
+    return;
+  }
 
   if (cameraMode !== 'creative') return;
 
@@ -4116,6 +4307,7 @@ async function forceRefreshSha() {
   initReflectionToggle();
   initFlatReflections();
   initPlayerController();
+  initCreativeUI();
   await setupSky();
   await setupCelestialBodies();
   await setupStars();
@@ -4143,6 +4335,7 @@ document.getElementById('refreshShaBtn').addEventListener('click', () => { setSe
   initReflectionToggle();
   initFlatReflections();
   initPlayerController();
+  initCreativeUI();
   await setupSky();
   await setupCelestialBodies();
   await setupStars();
