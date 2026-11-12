@@ -2365,7 +2365,8 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
   registerBlockCollision(info);
 
   const blockKey = `${pos.x},${pos.y},${pos.z}`;
-  if (blockEntityModels[id.replace('minecraft:', '')] && collectBlockEntityGeometry(info)) {
+  const beModel = blockEntityModels[id.replace('minecraft:', '')];
+  if (beModel && !beModel.extra && collectBlockEntityGeometry(info)) {
     collisionSolids.add(blockKey);
     return;
   }
@@ -2412,6 +2413,7 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
       collectElementFaces(el, data.textures || {}, id, q, offset, skipFaces, overrideMaterial, translucent, blockKey, entry.uvlock, rotX, rotY, properties?.facing);
     }
   }
+  if (beModel?.extra) collectBlockEntityGeometry(info);
 }
 
 /* ============================= COINCIDENT FACE DEDUPLICATION ============================= */
