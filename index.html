@@ -54,24 +54,27 @@
     }
     body.play #webgl-canvas { cursor:crosshair; }
     .error-overlay { position:absolute; top:10px; right:10px; max-width:400px; max-height:300px; overflow:auto; background:rgba(255,0,0,0.1); border:1px solid rgba(255,0,0,0.3); border-radius:8px; padding:8px; font-size:12px; color:#ff9999; display:none; z-index:20; white-space:pre-wrap; word-break:break-all; }
-    .creative-bar { position:absolute; left:50%; bottom:14px; transform:translateX(-50%); display:flex; gap:5px; padding:5px; border-radius:12px; background:rgba(4,12,16,0.72); border:1px solid rgba(57,255,20,0.18); box-shadow:0 8px 30px rgba(0,0,0,0.45); backdrop-filter:blur(8px); z-index:14; pointer-events:auto; }
-    .creative-slot, .creative-add { width:44px; height:44px; padding:0; border-radius:8px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:#eaffea; cursor:pointer; position:relative; overflow:hidden; }
+    .creative-bar { position:absolute; left:50%; bottom:14px; transform:translateX(-50%); display:flex; gap:3px; padding:4px; border-radius:3px; background:#c6c6c6; border:2px solid #373737; box-shadow:inset 2px 2px 0 #ffffff, inset -2px -2px 0 #555555, 0 8px 30px rgba(0,0,0,0.45); z-index:14; pointer-events:auto; }
+    .creative-slot, .creative-add { width:40px; height:40px; padding:0; border-radius:0; border:2px solid #8b8b8b; background:#8b8b8b; color:#3f3f3f; cursor:pointer; position:relative; overflow:hidden; box-shadow:inset 1px 1px 0 #373737, inset -1px -1px 0 #ffffff; }
     .creative-slot img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
-    .creative-slot.selected { border-color:#39ff14; box-shadow:0 0 0 2px rgba(57,255,20,0.35) inset; }
-    .creative-slot .slot-num { position:absolute; left:3px; top:1px; font:10px/1 var(--mono); color:rgba(255,255,255,0.65); }
-    .creative-add { font:700 20px/1 var(--mono); color:#b8ffb0; }
-    .inventory-overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.62); backdrop-filter:blur(3px); z-index:60; }
+    .creative-slot.selected { border-color:#ffffff; box-shadow:inset 0 0 0 2px #ffffff, inset 2px 2px 0 #373737; }
+    .creative-slot .slot-num { position:absolute; left:2px; top:0; font:10px/1 var(--mono); color:#373737; }
+    .creative-add { font:700 20px/1 var(--mono); color:#3f3f3f; }
+    .inventory-overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.55); z-index:60; }
     .inventory-overlay.open { display:flex; }
-    .inventory-panel { width:min(760px,94vw); height:min(620px,86vh); display:flex; flex-direction:column; gap:10px; padding:14px; border-radius:14px; background:rgba(8,20,24,0.98); border:1px solid rgba(57,255,20,0.25); box-shadow:0 24px 70px rgba(0,0,0,0.65); }
-    .inventory-head { display:flex; align-items:center; gap:10px; }
-    .inventory-head strong { color:#eaffea; font-size:16px; flex:0 0 auto; }
-    #inventorySearch { flex:1; min-width:0; padding:9px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#eaffea; outline:none; }
-    #inventoryClose { width:34px; height:34px; border-radius:8px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:#ffb3b3; cursor:pointer; font-size:18px; }
-    .inventory-grid { flex:1; overflow:auto; display:grid; grid-template-columns:repeat(auto-fill, minmax(54px, 1fr)); gap:6px; align-content:start; padding-right:4px; }
-    .inventory-item { min-height:54px; padding:3px; border-radius:7px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.03); color:#cfe8d0; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; font:9px/1.1 var(--mono); overflow:hidden; }
-    .inventory-item:hover { border-color:rgba(57,255,20,0.55); background:rgba(57,255,20,0.10); }
-    .inventory-item img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
-    .inventory-item span { width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .inventory-panel { width:min(760px,94vw); height:min(620px,86vh); display:flex; flex-direction:column; gap:8px; padding:12px; border-radius:0; background:#c6c6c6; border:4px solid #373737; box-shadow:inset 3px 3px 0 #ffffff, inset -3px -3px 0 #555555, 0 24px 70px rgba(0,0,0,0.65); color:#3f3f3f; image-rendering:pixelated; }
+    .inventory-head { display:flex; align-items:center; gap:8px; }
+    .inventory-head strong { color:#3f3f3f; font-size:15px; flex:0 0 auto; text-shadow:1px 1px 0 #ffffff; }
+    #inventorySearch { flex:1; min-width:0; padding:8px; border-radius:0; border:2px solid #a0a0a0; background:#ffffff; color:#1f1f1f; outline:none; font:13px var(--mono); box-shadow:inset 1px 1px 0 #555555; }
+    #inventoryClose { width:30px; height:30px; border-radius:0; border:2px solid #373737; background:#8b8b8b; color:#3f3f3f; cursor:pointer; font-size:18px; box-shadow:inset 1px 1px 0 #ffffff; }
+    .inventory-tabs { display:flex; gap:2px; overflow-x:auto; padding-bottom:2px; }
+    .inventory-tab { flex:0 0 auto; padding:5px 8px; border:2px solid #373737; border-bottom:0; background:#8b8b8b; color:#3f3f3f; font:10px/1 var(--mono); cursor:pointer; box-shadow:inset 1px 1px 0 #ffffff; }
+    .inventory-tab.active { background:#c6c6c6; color:#1f1f1f; }
+    .inventory-grid { flex:1; overflow:auto; display:grid; grid-template-columns:repeat(9, 42px); grid-auto-rows:42px; gap:2px; justify-content:center; align-content:start; padding:4px; background:#8b8b8b; border:2px solid #373737; box-shadow:inset 2px 2px 0 #555555; }
+    .inventory-item { min-height:42px; padding:1px; border-radius:0; border:2px solid #8b8b8b; background:#8b8b8b; color:#3f3f3f; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; font:8px/1 var(--mono); overflow:hidden; box-shadow:inset 1px 1px 0 #373737; }
+    .inventory-item:hover { border-color:#ffffff; background:#c6c6c6; }
+    .inventory-item img { width:30px; height:30px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .inventory-item span { display:none; }
     body.touch .creative-bar { bottom:8px; }
   </style>
 </head>
@@ -120,9 +123,10 @@
       <div class="inventory-panel">
         <div class="inventory-head">
           <strong>Creative Inventory</strong>
-          <input id="inventorySearch" type="search" placeholder="Search blocks…" autocomplete="off" />
+          <input id="inventorySearch" type="search" placeholder="Search items…" autocomplete="off" />
           <button id="inventoryClose" type="button" aria-label="Close inventory">×</button>
         </div>
+        <div id="inventoryTabs" class="inventory-tabs"></div>
         <div id="inventoryGrid" class="inventory-grid"></div>
       </div>
     </div>
@@ -1775,6 +1779,9 @@ async function loadBlockProperties() {
     if (collisionRes.ok) blockCollisionShapes = await collisionRes.json();
     const statesRes = await fetch(new URL('viewer/block_collision_states.json', location.href));
     if (statesRes.ok) blockCollisionStates = await statesRes.json();
+    const itemsRes = await fetch(new URL('viewer/items.json', location.href));
+    if (itemsRes.ok) creativeItems = await itemsRes.json();
+    if (creativeInventoryOpen) { renderCreativeTabs(); renderCreativeInventory(document.getElementById('inventorySearch')?.value || ''); }
     blockPropertiesReady = true;
   } catch (err) {
     console.warn('Block properties load failed', err);
@@ -3549,46 +3556,85 @@ function setCameraMode(mode, requestLock = true) {
 }
 
 const CREATIVE_HOTBAR_DEFAULT = [
-  'stone', 'oak_planks', 'cobblestone', 'dirt', 'oak_log',
-  'glass', 'oak_stairs', 'torch', 'grass_block',
+  { id: 'stone', type: 'block' }, { id: 'oak_planks', type: 'block' },
+  { id: 'cobblestone', type: 'block' }, { id: 'dirt', type: 'block' },
+  { id: 'oak_log', type: 'block' }, { id: 'glass', type: 'block' },
+  { id: 'oak_stairs', type: 'block' }, { id: 'torch', type: 'block' },
+  { id: 'grass_block', type: 'block' },
 ];
+const CREATIVE_CATEGORIES = [
+  'Building Blocks', 'Colored Blocks', 'Natural Blocks', 'Functional Blocks',
+  'Redstone Blocks', 'Tools & Utilities', 'Combat', 'Food & Drinks',
+  'Ingredients', 'Spawn Eggs',
+];
+let creativeItems = [];
+let creativeCategory = 'Building Blocks';
 let creativeHotbar = CREATIVE_HOTBAR_DEFAULT.slice();
 let creativeSlot = 0;
-let creativeSelectedBlock = creativeHotbar[0];
+let creativeSelectedItem = creativeHotbar[0];
 let creativeInventoryOpen = false;
 const creativeIconCache = new Map();
+const creativeIconQueue = [];
+let creativeIconsActive = 0;
+
+function queueCreativeIcon(id, type, img) {
+  img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
+  creativeIconQueue.push({ id, type, img });
+  pumpCreativeIcons();
+}
+
+async function pumpCreativeIcons() {
+  while (creativeIconsActive < 8 && creativeIconQueue.length) {
+    const job = creativeIconQueue.shift();
+    creativeIconsActive++;
+    creativeIconUrl(job.id, job.type).then(url => {
+      if (url) job.img.src = url;
+      else job.img.style.visibility = 'hidden';
+    }).finally(() => {
+      creativeIconsActive--;
+      pumpCreativeIcons();
+    });
+  }
+}
 
 function creativeLabel(id) {
   return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-async function creativeIconUrl(id) {
-  if (creativeIconCache.has(id)) return creativeIconCache.get(id);
+async function creativeIconUrl(id, type = 'block') {
+  const cacheKey = `${type}:${id}`;
+  if (creativeIconCache.has(cacheKey)) return creativeIconCache.get(cacheKey);
   let url = null;
-  try {
-    const stateData = await loadBlockstate(id);
-    const refs = [];
-    if (stateData.variants) {
-      for (const v of Object.values(stateData.variants)) {
-        for (const a of (Array.isArray(v) ? v : [v])) if (a?.model) refs.push(a.model);
+  if (type === 'item') {
+    url = `${ASSET_BASE}/textures/item/${id}.png`;
+  } else {
+    try {
+      const stateData = await loadBlockstate(id);
+      const refs = [];
+      if (stateData.variants) {
+        for (const v of Object.values(stateData.variants)) {
+          for (const a of (Array.isArray(v) ? v : [v])) if (a?.model) refs.push(a.model);
+        }
       }
-    }
-    for (const part of stateData.multipart || []) {
-      const ap = part.apply; for (const a of (Array.isArray(ap) ? ap : [ap])) if (a?.model) refs.push(a.model);
-    }
-    for (const ref of refs.slice(0, 3)) {
-      const data = await loadModel(ref);
-      if (!data?.textures) continue;
-      const preferred = data.textures.particle || data.textures.all ||
-        data.textures.side || data.textures.top || Object.values(data.textures)[0];
-      const tex = resolveTexture(preferred, data.textures);
-      if (tex && tex !== 'block/missing') {
-        url = `${ASSET_BASE}/textures/${tex}.png`;
-        break;
+      for (const part of stateData.multipart || []) {
+        const ap = part.apply; for (const a of (Array.isArray(ap) ? ap : [ap])) if (a?.model) refs.push(a.model);
       }
-    }
-  } catch (err) { /* leave placeholder */ }
-  creativeIconCache.set(id, url);
+      for (const ref of refs.slice(0, 3)) {
+        const data = await loadModel(ref);
+        if (!data?.textures) continue;
+        const preferred = data.textures.particle || data.textures.all ||
+          data.textures.side || data.textures.top || Object.values(data.textures)[0];
+        const tex = resolveTexture(preferred, data.textures);
+        if (tex && tex !== 'block/missing') {
+          let cleanTex = tex.replace(/^minecraft:/, '');
+          if (!cleanTex.startsWith('textures/')) cleanTex = `textures/${cleanTex}`;
+          url = `${ASSET_BASE}/${cleanTex}.png`;
+          break;
+        }
+      }
+    } catch (err) { /* leave placeholder */ }
+  }
+  creativeIconCache.set(cacheKey, url);
   return url;
 }
 
@@ -3596,20 +3642,20 @@ function renderCreativeHotbar() {
   const bar = document.getElementById('creativeBar');
   if (!bar) return;
   bar.textContent = '';
-  creativeHotbar.forEach((id, index) => {
+  creativeHotbar.forEach((item, index) => {
     const slot = document.createElement('button');
     slot.type = 'button';
     slot.className = 'creative-slot' + (index === creativeSlot ? ' selected' : '');
-    slot.title = `${index + 1}: ${creativeLabel(id)}`;
+    slot.title = `${index + 1}: ${creativeLabel(item.id)}`;
     const num = document.createElement('span');
     num.className = 'slot-num'; num.textContent = String(index + 1);
     const img = document.createElement('img');
     img.alt = '';
-    creativeIconUrl(id).then(url => { if (url) img.src = url; });
+    queueCreativeIcon(item.id, item.type, img);
     slot.append(num, img);
     slot.addEventListener('click', () => {
       creativeSlot = index;
-      creativeSelectedBlock = id;
+      creativeSelectedItem = item;
       renderCreativeHotbar();
     });
     bar.appendChild(slot);
@@ -3623,35 +3669,59 @@ function renderCreativeHotbar() {
   bar.appendChild(add);
 }
 
+function renderCreativeTabs() {
+  const tabs = document.getElementById('inventoryTabs');
+  if (!tabs) return;
+  tabs.textContent = '';
+  for (const category of CREATIVE_CATEGORIES) {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'inventory-tab' + (category === creativeCategory ? ' active' : '');
+    tab.textContent = category;
+    tab.addEventListener('click', () => {
+      creativeCategory = category;
+      const search = document.getElementById('inventorySearch');
+      if (search) search.value = '';
+      renderCreativeTabs();
+      renderCreativeInventory();
+    });
+    tabs.appendChild(tab);
+  }
+}
+
 function renderCreativeInventory(filter = '') {
   const grid = document.getElementById('inventoryGrid');
   if (!grid) return;
   const query = filter.trim().toLowerCase();
-  const ids = Object.keys(blockProperties)
-    .filter(id => id !== 'air' && (!query || id.includes(query)))
-    .sort();
+  const source = creativeItems.length
+    ? creativeItems
+    : Object.keys(blockProperties).filter(id => id !== 'air').map(id => ({ id, type: 'block', cat: 'Building Blocks' }));
+  const rows = source
+    .filter(item => !query ? item.cat === creativeCategory : item.id.includes(query))
+    .sort((a, b) => a.id.localeCompare(b.id));
   grid.textContent = '';
-  if (!ids.length) {
+  if (!rows.length) {
     const empty = document.createElement('div');
     empty.className = 'inventory-item';
-    empty.textContent = blockPropertiesReady ? 'No blocks' : 'Loading blocks…';
+    empty.textContent = creativeItems.length ? 'No items' : 'Loading items…';
     grid.appendChild(empty);
     return;
   }
-  for (const id of ids) {
+  for (const entry of rows) {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'inventory-item';
-    item.title = id;
+    item.title = entry.id;
     const img = document.createElement('img');
     img.alt = ''; img.loading = 'lazy';
-    creativeIconUrl(id).then(url => { if (url) img.src = url; else img.style.display = 'none'; });
+    queueCreativeIcon(entry.id, entry.type, img);
     const label = document.createElement('span');
-    label.textContent = creativeLabel(id);
+    label.textContent = creativeLabel(entry.id);
     item.append(img, label);
     item.addEventListener('click', () => {
-      creativeHotbar[creativeSlot] = id;
-      creativeSelectedBlock = id;
+      const value = { id: entry.id, type: entry.type };
+      creativeHotbar[creativeSlot] = value;
+      creativeSelectedItem = value;
       renderCreativeHotbar();
       closeCreativeInventory();
     });
@@ -3668,6 +3738,7 @@ function openCreativeInventory() {
   document.exitPointerLock?.();
   const search = document.getElementById('inventorySearch');
   if (search) { search.value = ''; setTimeout(() => search.focus(), 0); }
+  renderCreativeTabs();
   renderCreativeInventory();
 }
 
@@ -3682,6 +3753,7 @@ function closeCreativeInventory() {
 
 function initCreativeUI() {
   renderCreativeHotbar();
+  renderCreativeTabs();
   const close = document.getElementById('inventoryClose');
   if (close) close.addEventListener('click', closeCreativeInventory);
   const overlay = document.getElementById('inventoryOverlay');
@@ -3765,7 +3837,7 @@ window.addEventListener('keydown', (e) => {
     const index = Number(digit[1]) - 1;
     if (index < creativeHotbar.length) {
       creativeSlot = index;
-      creativeSelectedBlock = creativeHotbar[index];
+      creativeSelectedItem = creativeHotbar[index];
       renderCreativeHotbar();
     }
     return;
