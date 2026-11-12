@@ -99,6 +99,10 @@
     .inventory-slot:hover { background:rgba(255,255,255,0.45); }
     body.inventory-open .creative-bar { display:none; }
     body.touch .creative-bar { bottom:8px; }
+    .creative-canvas-wrap { position:relative; image-rendering:pixelated; }
+    .creative-canvas { display:block; image-rendering:pixelated; }
+    .creative-player-source { display:none; }
+    .creative-search-input { position:absolute; opacity:0; border:0; padding:0; background:transparent; color:transparent; outline:none; pointer-events:none; }
   </style>
 </head>
 <body>
@@ -143,20 +147,10 @@
     <div id="crosshair"></div>
     <div id="creativeBar" class="creative-bar" aria-label="Creative hotbar"></div>
     <div id="inventoryOverlay" class="inventory-overlay" aria-hidden="true">
-      <div class="inventory-panel">
-        <div class="inventory-head">
-          <input id="inventorySearch" type="search" placeholder="Search items…" autocomplete="off" />
-          <button id="inventoryClose" type="button" aria-label="Close inventory">×</button>
-        </div>
-        <div id="inventoryTabs" class="inventory-tabs"></div>
-        <canvas id="inventoryText" class="inventory-text" width="390" height="272"></canvas>
-        <canvas id="inventoryPlayer" class="inventory-player" width="64" height="86"></canvas>
-        <div id="inventoryGrid" class="inventory-grid"></div>
-        <div id="inventoryHotbar" class="inventory-hotbar"></div>
-        <div id="inventorySlotLayer" class="inventory-slot-layer"></div>
-        <div class="inventory-scroll"><div id="inventoryScrollKnob" class="inventory-scroll-knob"></div></div>
-        <div id="creativeCursor" class="creative-cursor"><img alt=""><span class="count"></span></div>
-        <div id="creativeTooltip" class="creative-tooltip"></div>
+      <div id="creativeCanvasWrap" class="creative-canvas-wrap">
+        <canvas id="creativeCanvas" class="creative-canvas"></canvas>
+        <canvas id="inventoryPlayer" class="creative-player-source" width="64" height="86"></canvas>
+        <input id="creativeSearchInput" class="creative-search-input" type="text" maxlength="50" autocomplete="off" spellcheck="false" aria-label="Search items" />
       </div>
     </div>
     <div id="mobileControls" class="mobile-controls" aria-hidden="true">
@@ -5210,6 +5204,505 @@ document.getElementById('flatReflectionsBtn').addEventListener('click', () => {
   setFlatReflectionsEnabled(!flatReflectionsEnabled, true);
 });
 document.getElementById('refreshShaBtn').addEventListener('click', () => { setSettingsOpen(false); forceRefreshSha(); });
+
+/* ============================= CREATIVE CANVAS SCREEN ============================= */
+/* One screen model, one renderer, one controller. No per-element UI layout. */
+
+const mcUI = {
+  open: false,
+  scale: 1.5,
+  page: 0,
+  carried: null,
+  search: '',
+  mouse: { x: 0, y: 0, inside: false },
+  hover: null,
+  draggingScroll: false,
+  images: new Map(),
+  icons: new Map(),
+  pendingImages: new Set(),
+};
+
+function mcImage(path) {
+  if (!path) return null;
+  const key = path.startsWith('http') ? path : `${ASSET_BASE}/${path}`;
+  if (mcUI.images.has(key)) return mcUI.images.get(key);
+  if (mcUI.pendingImages.has(key)) return null;
+  mcUI.pendingImages.add(key);
+  loadImage(key).then(img => {
+    mcUI.images.set(key, img);
+    mcUI.pendingImages.delete(key);
+    mcRequestRender();
+  }).catch(() => {
+    mcUI.images.set(key, null);
+    mcUI.pendingImages.delete(key);
+  });
+  return null;
+}
+
+function mcFontImage() {
+  return mcImage('textures/font/ascii.png');
+}
+
+const mcFontTintCache = new Map();
+function mcTintedFont(color) {
+  const src = mcFontImage();
+  if (!src) return null;
+  if (mcFontTintCache.has(color)) return mcFontTintCache.get(color);
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  g.drawImage(src, 0, 0);
+  g.globalCompositeOperation = 'source-in';
+  g.fillStyle = color;
+  g.fillRect(0, 0, c.width, c.height);
+  mcFontTintCache.set(color, c);
+  return c;
+}
+
+function mcText(ctx, text, x, y, color = '#404040', scale = 1) {
+  const font = mcTintedFont(color);
+  if (!font) return;
+  let cx = x;
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code === 32) { cx += 4 * scale; continue; }
+    const col = code % 16;
+    const row = Math.floor(code / 16);
+    ctx.drawImage(font, col * 8, row * 8, 8, 8, cx, y, 8 * scale, 8 * scale);
+    cx += 6 * scale;
+  }
+}
+
+function mcMeasureText(text, scale = 1) {
+  let w = 0;
+  for (const ch of text) w += ch === ' ' ? 4 * scale : 6 * scale;
+  return w;
+}
+
+function mcSelectedTab() {
+  return creativeTabs.find(tab => tab.name === creativeCategory) || creativeTabs[0];
+}
+
+function mcScreenLayout() {
+  const tab = mcSelectedTab();
+  return tab?.type === 'INVENTORY' ? CREATIVE_LAYOUTS.inventory : CREATIVE_LAYOUTS.creative;
+}
+
+function mcTabX(tab, layout) {
+  const right = ['Saved Hotbars', 'Search Items', 'Operator Utilities', 'Survival Inventory'].includes(tab.name);
+  return right
+    ? layout.width - layout.tabs.spacing * (7 - tab.column) + 1
+    : layout.tabs.spacing * tab.column;
+}
+
+function mcTabRects(layout) {
+  return creativeTabs.map(tab => {
+    const top = tab.row !== 'BOTTOM';
+    return {
+      tab,
+      x: mcTabX(tab, layout),
+      y: top ? layout.tabs.drawTop : layout.tabs.drawBottom,
+      w: layout.tabs.width,
+      h: layout.tabs.height,
+    };
+  });
+}
+
+function mcEntryType(id) {
+  return blockProperties[id] ? 'block' : 'item';
+}
+
+function mcFilteredEntries() {
+  const tab = mcSelectedTab();
+  let items = tab?.items || [];
+  if (mcUI.search) {
+    const q = mcUI.search.toLowerCase();
+    items = items.filter(id => id.includes(q));
+  }
+  return items.map(id => ({ id, type: mcEntryType(id) }));
+}
+
+function mcRows() {
+  return Math.max(0, Math.ceil(mcFilteredEntries().length / 9) - 5);
+}
+
+function mcIconFor(entry) {
+  const key = `${entry.type}:${entry.id}`;
+  if (mcUI.icons.has(key)) return mcUI.icons.get(key);
+  mcUI.icons.set(key, null);
+  if (entry.type === 'block') {
+    creativeBlockIcon3DCanvas(entry.id).then(canvas => {
+      if (canvas) { mcUI.icons.set(key, canvas); mcRequestRender(); }
+    });
+    creativeBlockIconCanvas(entry.id).then(canvas => {
+      if (canvas && !mcUI.icons.get(key)) { mcUI.icons.set(key, canvas); mcRequestRender(); }
+    });
+  }
+  creativeIconUrl(entry.id, entry.type).then(url => {
+    if (!url) return;
+    loadImage(url).then(img => {
+      if (!mcUI.icons.get(key)) { mcUI.icons.set(key, img); mcRequestRender(); }
+    }).catch(() => {});
+  });
+  return null;
+}
+
+function mcDrawIcon(ctx, entry, x, y, size = 16) {
+  const icon = mcIconFor(entry);
+  if (!icon) return;
+  ctx.drawImage(icon, x, y, size, size);
+}
+
+let mcRenderQueued = false;
+function mcRequestRender() {
+  if (mcRenderQueued || !mcUI.open) return;
+  mcRenderQueued = true;
+  requestAnimationFrame(() => {
+    mcRenderQueued = false;
+    mcRender();
+  });
+}
+
+function mcResize() {
+  const canvas = document.getElementById('creativeCanvas');
+  if (!canvas) return { canvas: null, ctx: null, layout: null, wrapW: 0, wrapH: 0 };
+  const layout = mcScreenLayout();
+  const logicalW = Math.max(195, layout.width) + 8;
+  const logicalH = layout.height + 64;
+  const scale = mcUI.scale;
+  canvas.width = Math.round(logicalW * scale);
+  canvas.height = Math.round(logicalH * scale);
+  canvas.style.width = `${canvas.width}px`;
+  canvas.style.height = `${canvas.height}px`;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  return { canvas, ctx, layout, logicalW, logicalH };
+}
+
+function mcRender() {
+  if (!mcUI.open) return;
+  const state = mcResize();
+  const { canvas, ctx, layout } = state;
+  if (!canvas) return;
+  const tab = mcSelectedTab();
+  const type = tab?.type;
+  const panelX = 4;
+  const panelY = 32;
+  const isInventory = type === 'INVENTORY';
+  const bgPath = isInventory
+    ? 'textures/gui/container/inventory.png'
+    : type === 'SEARCH'
+      ? 'textures/gui/container/creative_inventory/tab_item_search.png'
+      : 'textures/gui/container/creative_inventory/tab_items.png';
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const bg = mcImage(bgPath);
+  if (bg) ctx.drawImage(bg, 0, 0, layout.width, layout.height, panelX, panelY, layout.width, layout.height);
+
+  // Tab bodies and icons.
+  for (const rect of mcTabRects(layout)) {
+    const selected = rect.tab.name === creativeCategory;
+    const top = rect.tab.row !== 'BOTTOM';
+    const suffix = `${top ? 'top' : 'bottom'}_${selected ? 'selected' : 'unselected'}_${Math.min(7, rect.tab.column + 1)}`;
+    const sprite = mcImage(`textures/gui/sprites/container/creative_inventory/tab_${suffix}.png`);
+    if (sprite) ctx.drawImage(sprite, 0, 0, 26, 32, panelX + rect.x, panelY + rect.y, 26, 32);
+    mcDrawIcon(ctx, { id: rect.tab.icon || 'stone', type: mcEntryType(rect.tab.icon || 'stone') }, panelX + rect.x + 5, panelY + rect.y + (top ? 9 : 7), 16);
+  }
+
+  if (type !== 'INVENTORY') {
+    mcText(ctx, tab?.name || '', panelX + layout.title.x, panelY + layout.title.y, '#404040', 1);
+  }
+
+  if (isInventory) {
+    const player = document.getElementById('inventoryPlayer');
+    if (player) {
+      player.dataset.ready = '0';
+      renderInventoryPlayer();
+      if (layout.player) {
+        ctx.drawImage(player, 0, 0, 64, 86, panelX + layout.player.x, panelY + layout.player.y, layout.player.w, layout.player.h);
+      }
+    }
+  } else {
+    const entries = mcFilteredEntries();
+    const maxRow = Math.max(0, Math.ceil(entries.length / 9) - 5);
+    mcUI.page = Math.max(0, Math.min(Math.round(mcUI.page), maxRow));
+    for (let i = 0; i < 45; i++) {
+      const entry = entries[mcUI.page * 9 + i];
+      if (!entry) continue;
+      const col = i % 9, row = Math.floor(i / 9);
+      const x = panelX + layout.grid.x + col * layout.grid.slot + 1;
+      const y = panelY + layout.grid.y + row * layout.grid.slot + 1;
+      mcDrawIcon(ctx, entry, x, y, 16);
+    }
+    for (let i = 0; i < 9; i++) {
+      const item = creativeHotbar[i];
+      if (!item) continue;
+      mcDrawIcon(ctx, item, panelX + layout.hotbar.x + i * layout.hotbar.slot + 1, panelY + layout.hotbar.y + 1, 16);
+    }
+    if (layout.scroll) {
+      const canScroll = maxRow > 0;
+      const thumb = canScroll ? mcImage('textures/gui/sprites/container/creative_inventory/scroller.png') : null;
+      if (thumb) {
+        const travel = layout.scroll.h - layout.scroll.thumb;
+        const offset = maxRow ? (mcUI.page / maxRow) * travel : 0;
+        ctx.drawImage(thumb, 0, 0, 12, 15,
+          panelX + layout.scroll.x, panelY + layout.scroll.y + offset, 12, 15);
+      }
+    }
+    if (type === 'SEARCH') {
+      mcText(ctx, mcUI.search, panelX + layout.search.x + 2, panelY + layout.search.y + 1, '#ffffff', 1);
+    }
+  }
+
+  const hover = mcUI.hover;
+  if (hover?.entry) {
+    const hx = panelX + hover.x + 1, hy = panelY + hover.y + 1;
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.fillRect(hx, hy, 16, 16);
+    const label = hover.entry.id.replace(/_/g, ' ');
+    const tw = mcMeasureText(label, 1);
+    const tx = panelX + mcUI.mouse.x + 10, ty = panelY + mcUI.mouse.y + 10;
+    ctx.fillStyle = 'rgba(16,0,16,0.94)';
+    ctx.fillRect(tx - 3, ty - 3, tw + 6, 14);
+    ctx.strokeStyle = '#2d0a63'; ctx.strokeRect(tx - 3.5, ty - 3.5, tw + 7, 15);
+    mcText(ctx, label, tx, ty, '#ffffff', 1);
+  }
+
+  if (mcUI.carried) {
+    const entry = { id: mcUI.carried.id, type: mcUI.carried.type };
+    const x = panelX + mcUI.mouse.x + 8, y = panelY + mcUI.mouse.y + 8;
+    mcDrawIcon(ctx, entry, x, y, 16);
+    if (mcUI.carried.count > 1) {
+      mcText(ctx, String(mcUI.carried.count), x + 10, y + 8, '#ffffff', 1);
+    }
+  }
+
+  const searchInput = document.getElementById('creativeSearchInput');
+  if (searchInput) {
+    if (type === 'SEARCH' && layout.search) {
+      searchInput.style.display = 'block';
+      searchInput.style.left = `${(panelX + layout.search.x) * mcUI.scale}px`;
+      searchInput.style.top = `${(panelY + layout.search.y) * mcUI.scale}px`;
+      searchInput.style.width = `${layout.search.w * mcUI.scale}px`;
+      searchInput.style.height = `${layout.search.h * mcUI.scale}px`;
+      searchInput.style.pointerEvents = 'auto';
+    } else {
+      searchInput.style.display = 'none';
+      searchInput.style.pointerEvents = 'none';
+    }
+  }
+}
+
+function mcHitSlot(x, y) {
+  const panelX = 4, panelY = 32;
+  const layout = mcScreenLayout();
+  if (!layout.grid || x < panelX || y < panelY) return null;
+  const lx = x - panelX, ly = y - panelY;
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 9; col++) {
+      const sx = layout.grid.x + col * layout.grid.slot;
+      const sy = layout.grid.y + row * layout.grid.slot;
+      if (lx >= sx && lx < sx + 18 && ly >= sy && ly < sy + 18) {
+        const idx = mcUI.page * 9 + row * 9 + col;
+        const entry = mcFilteredEntries()[idx];
+        return entry ? { kind: 'creative', entry, x: sx, y: sy, index: idx } : null;
+      }
+    }
+  }
+  for (let i = 0; i < 9; i++) {
+    const sx = layout.hotbar.x + i * layout.hotbar.slot;
+    const sy = layout.hotbar.y;
+    if (lx >= sx && lx < sx + 18 && ly >= sy && ly < sy + 18) return { kind: 'hotbar', index: i, x: sx, y: sy, entry: creativeHotbar[i] };
+  }
+  return null;
+}
+
+function mcClickSlot(slot, button) {
+  if (!slot) return;
+  if (slot.kind === 'hotbar') {
+    if (mcUI.carried) {
+      creativeHotbar[slot.index] = { id: mcUI.carried.id, type: mcUI.carried.type };
+      creativeSlot = slot.index;
+      mcUI.carried = null;
+      renderCreativeHotbar();
+    } else {
+      creativeSlot = slot.index;
+    }
+  } else if (slot.kind === 'creative') {
+    if (!mcUI.carried) mcUI.carried = { id: slot.entry.id, type: slot.entry.type, count: 1 };
+    else if (mcUI.carried.id === slot.entry.id && mcUI.carried.type === slot.entry.type) {
+      mcUI.carried.count = button === 0 ? Math.min(64, mcUI.carried.count + 1) : Math.max(1, mcUI.carried.count - 1);
+    } else mcUI.carried = { id: slot.entry.id, type: slot.entry.type, count: 1 };
+  }
+  mcRequestRender();
+}
+
+function mcPointer(event) {
+  const canvas = document.getElementById('creativeCanvas');
+  if (!canvas) return null;
+  const rect = canvas.getBoundingClientRect();
+  const logicalW = canvas.width / mcUI.scale;
+  const logicalH = canvas.height / mcUI.scale;
+  return {
+    x: (event.clientX - rect.left) / rect.width * logicalW,
+    y: (event.clientY - rect.top) / rect.height * logicalH,
+  };
+}
+
+function mcOnPointerMove(event) {
+  if (!mcUI.open) return;
+  const p = mcPointer(event);
+  if (!p) return;
+  mcUI.mouse.x = p.x - 4;
+  mcUI.mouse.y = p.y - 32;
+  const layout = mcScreenLayout();
+  const hit = mcHitSlot(p.x, p.y);
+  mcUI.hover = hit;
+  const overTab = mcTabRects(layout).some(r => p.x >= 4 + r.x && p.x < 4 + r.x + r.w && p.y >= 32 + r.y && p.y < 32 + r.y + r.h);
+  const overPanel = p.x >= 4 && p.x < 4 + layout.width && p.y >= 32 && p.y < 32 + layout.height;
+  canvasCursor(overTab ? 'pointer' : 'default');
+  mcRequestRender();
+}
+
+function canvasCursor(cursor) {
+  const canvas = document.getElementById('creativeCanvas');
+  if (canvas) canvas.style.cursor = cursor;
+}
+
+function mcOnPointerDown(event) {
+  if (!mcUI.open) return;
+  const p = mcPointer(event);
+  if (!p) return;
+  const layout = mcScreenLayout();
+  for (const rect of mcTabRects(layout)) {
+    if (p.x >= 4 + rect.x && p.x < 4 + rect.x + rect.w && p.y >= 32 + rect.y && p.y < 32 + rect.y + rect.h) {
+      creativeCategory = rect.tab.name;
+      mcUI.page = 0;
+      mcUI.search = '';
+      const input = document.getElementById('creativeSearchInput');
+      if (input) input.value = '';
+      mcRender();
+      if (rect.tab.type === 'SEARCH') {
+        const si = document.getElementById('creativeSearchInput');
+        if (si) { si.style.display = 'block'; si.focus(); }
+      }
+      return;
+    }
+  }
+  if (layout.scroll && p.x >= 4 + layout.scroll.x && p.x < 4 + layout.scroll.x + layout.scroll.w && p.y >= 32 + layout.scroll.y && p.y < 32 + layout.scroll.y + layout.scroll.h) {
+    mcUI.draggingScroll = true;
+    mcUpdateScrollFromPointer(p);
+    return;
+  }
+  const slot = mcHitSlot(p.x, p.y);
+  if (slot) { mcClickSlot(slot, event.button); return; }
+  if (mcUI.carried && (p.x < 4 || p.y < 32 || p.x >= 4 + layout.width || p.y >= 32 + layout.height)) {
+    mcUI.carried = null;
+    mcRequestRender();
+  }
+}
+
+function mcUpdateScrollFromPointer(p) {
+  const layout = mcScreenLayout();
+  const maxRow = mcRows();
+  if (!layout.scroll || maxRow <= 0) return;
+  const ratio = Math.max(0, Math.min(1, (p.y - 32 - layout.scroll.y - 7.5) / Math.max(1, layout.scroll.h - 15)));
+  mcUI.page = Math.round(ratio * maxRow);
+  mcRequestRender();
+}
+
+function mcOnPointerUp() { mcUI.draggingScroll = false; }
+
+function mcOnWheel(event) {
+  if (!mcUI.open) return;
+  const layout = mcScreenLayout();
+  if (!layout.scroll) return;
+  event.preventDefault();
+  const maxRow = mcRows();
+  mcUI.page = Math.max(0, Math.min(maxRow, mcUI.page + (event.deltaY > 0 ? 1 : -1)));
+  mcRequestRender();
+}
+
+function mcOnSearchInput(event) {
+  mcUI.search = event.target.value || '';
+  mcUI.page = 0;
+  mcRequestRender();
+}
+
+function mcOpen() {
+  mcUI.open = true;
+  creativeInventoryOpen = true;
+  mcUI.page = 0;
+  mcUI.search = '';
+  mcUI.carried = null;
+  mcUI.hover = null;
+  const overlay = document.getElementById('inventoryOverlay');
+  if (overlay) { overlay.classList.add('open'); overlay.setAttribute('aria-hidden', 'false'); }
+  document.body.classList.add('inventory-open');
+  document.exitPointerLock?.();
+  const input = document.getElementById('creativeSearchInput');
+  if (input) input.value = '';
+  mcRender();
+}
+
+function mcClose() {
+  mcUI.open = false;
+  creativeInventoryOpen = false;
+  mcUI.carried = null;
+  mcUI.hover = null;
+  const overlay = document.getElementById('inventoryOverlay');
+  if (overlay) { overlay.classList.remove('open'); overlay.setAttribute('aria-hidden', 'true'); }
+  document.body.classList.remove('inventory-open');
+}
+
+openCreativeInventory = function() { mcOpen(); };
+closeCreativeInventory = function() { mcClose(); };
+initCreativeUI = function() {
+  mcUI.scale = CONFIG?.ui?.creativeGuiScale ?? 1.5;
+  const canvas = document.getElementById('creativeCanvas');
+  if (!canvas) return;
+  canvas.addEventListener('pointermove', mcOnPointerMove);
+  canvas.addEventListener('pointerdown', mcOnPointerDown);
+  window.addEventListener('pointerup', mcOnPointerUp);
+  canvas.addEventListener('wheel', mcOnWheel, { passive: false });
+  const input = document.getElementById('creativeSearchInput');
+  if (input) input.addEventListener('input', mcOnSearchInput);
+  window.setCreativeGuiScale = (scale, persist = false) => {
+    mcUI.scale = Math.max(0.75, Math.min(4, Number(scale) || 1.5));
+    if (persist) { try { localStorage.setItem('viewerCreativeGuiScale', String(mcUI.scale)); } catch {} }
+    mcRender();
+  };
+  window.openCreativeInventory = openCreativeInventory;
+  window.closeCreativeInventory = closeCreativeInventory;
+  window.isCreativeInventoryOpen = () => mcUI.open;
+  window.selectCreativeTab = (name) => {
+    creativeCategory = name;
+    mcUI.page = 0;
+    mcUI.search = '';
+    const si = document.getElementById('creativeSearchInput');
+    if (si) si.value = '';
+    mcRender();
+  };
+  window.addEventListener('keydown', (event) => {
+    if (!mcUI.open) return;
+    if (event.code === 'Escape' || event.code === 'KeyE') {
+      event.preventDefault(); event.stopPropagation(); mcClose(); return;
+    }
+    if (/^Digit[1-9]$/.test(event.code) && event.target !== input) {
+      creativeSlot = Number(event.code.slice(5)) - 1;
+      renderCreativeHotbar();
+      mcRequestRender();
+    }
+  }, true);
+  // HUD hotbar listeners are created by its own renderer.
+  renderCreativeHotbar();
+}
+
+renderCreativeTabs = function() { mcRequestRender(); };
+renderCreativeInventory = function() { mcRequestRender(); };
+updateCreativePanelBackground = function() { mcRequestRender(); };
+setCreativeGuiScale = function(scale, persist = false) { window.setCreativeGuiScale?.(scale, persist); };
 
 
 (async () => {
