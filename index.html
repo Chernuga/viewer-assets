@@ -80,6 +80,7 @@
     .inventory-panel.inventory-mode { width:352px; height:332px; background-image:url('minecraft/textures/gui/container/inventory.png'); background-size:352px 332px; }
     .inventory-panel.inventory-mode .inventory-grid,
     .inventory-panel.inventory-mode .inventory-hotbar { display:none; }
+    .inventory-panel.inventory-mode .inventory-scroll { display:none; }
     .inventory-panel.inventory-mode .inventory-player { display:block; left:52px; top:16px; width:98px; height:140px; }
     .creative-cursor { position:fixed; width:36px; height:36px; pointer-events:none; z-index:80; display:none; }
     .creative-cursor img, .creative-cursor canvas { width:32px; height:32px; position:absolute; left:2px; top:2px; image-rendering:pixelated; }
@@ -142,7 +143,6 @@
     <div id="inventoryOverlay" class="inventory-overlay" aria-hidden="true">
       <div class="inventory-panel">
         <div class="inventory-head">
-          <strong>Creative Inventory</strong>
           <input id="inventorySearch" type="search" placeholder="Search items…" autocomplete="off" />
           <button id="inventoryClose" type="button" aria-label="Close inventory">×</button>
         </div>
@@ -4161,10 +4161,7 @@ function updateCreativePanelBackground() {
   panel.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/${file}')`;
   panel.style.backgroundSize = type === 'INVENTORY' ? '352px 332px' : '512px 512px';
   const title = panel.querySelector('.inventory-head strong');
-  if (title) {
-    title.style.visibility = type === 'INVENTORY' ? 'hidden' : 'visible';
-    title.textContent = type === 'SEARCH' ? 'Search Items' : type === 'HOTBAR' ? 'Saved Hotbars' : 'Creative Inventory';
-  }
+  if (title) title.style.visibility = 'hidden';
   const search = document.getElementById('inventorySearch');
   if (search) search.style.display = type === 'SEARCH' ? 'block' : 'none';
   panel.classList.toggle('inventory-mode', type === 'INVENTORY');
@@ -4216,7 +4213,7 @@ function renderInventoryText() {
   const selected = creativeTabs.find(tab => tab.name === creativeCategory);
   const type = selected?.type;
   if (type !== 'INVENTORY') {
-    const label = type === 'SEARCH' ? 'Search Items' : type === 'HOTBAR' ? 'Saved Hotbars' : 'Creative Inventory';
+    const label = selected?.name || 'Building Blocks';
     drawMinecraftText(ctx, label, 16, 12, 2, '#404040');
   }
   if (type === 'SEARCH') {
