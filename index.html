@@ -2268,6 +2268,12 @@ function bannerPatternsFromNbt(nbt) {
   return out;
 }
 
+function potPatternsFromNbt(nbt) {
+  if (!nbt) return [];
+  const list = nbt.match(/sherds\s*:\s*\[([^\]]*)\]/i)?.[1] || '';
+  return [...list.matchAll(/"([^"]+)"/g)].map(m => m[1].replace('minecraft:', '').replace('_pottery_sherd', ''));
+}
+
 function collectBlockEntityGeometry(info) {
   const { id, pos, properties } = info;
   const model = blockEntityModels[id.replace('minecraft:', '')];
@@ -2323,6 +2329,30 @@ function collectBlockEntityGeometry(info) {
         const uvs = [[0, 0], [1, 0], [1, 1], [0, 1]];
         pushQuad(bucket, corners[0], corners[1], corners[2], corners[3], new THREE.Vector3(nx, n[1], nz), uvs, `${pos.x},${pos.y},${pos.z}`);
       }
+    });
+  }
+  const potSherds = id === 'decorated_pot' ? potPatternsFromNbt(info.nbt) : [];
+  if (potSherds.length && model.quads) {
+    const sideQuads = model.quads.slice(0, 4);
+    potSherds.slice(0, 4).forEach((pattern, side) => {
+      if (!pattern || pattern === 'brick') return;
+      const tex = `entity/decorated_pot/${pattern}_pottery_pattern`;
+      const material = getBlockMaterial(tex, undefined, false, false);
+      material.side = THREE.DoubleSide;
+      const bucket = getBucket(material);
+      const quad = sideQuads[side];
+      if (!quad) return;
+      const n = quad.normal;
+      const corners = quad.positions.map(([x, y, z]) => {
+        let rx = x / 16 - 0.5, rz = (z + n[2] * 0.05) / 16 - 0.5;
+        const tx = rx * cos - rz * sin;
+        const tz = rx * sin + rz * cos;
+        return new THREE.Vector3(pos.x + 0.5 + tx, pos.y + 0.5 + y / 16, pos.z + 0.5 + tz);
+      });
+      const nx = n[0] * cos - n[2] * sin;
+      const nz = n[0] * sin + n[2] * cos;
+      pushQuad(bucket, corners[0], corners[1], corners[2], corners[3],
+        new THREE.Vector3(nx, n[1], nz), [[0, 0], [1, 0], [1, 1], [0, 1]], `${pos.x},${pos.y},${pos.z}`);
     });
   }
   return true;
