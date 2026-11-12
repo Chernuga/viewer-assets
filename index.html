@@ -66,7 +66,7 @@
     .inventory-panel { position:relative; width:390px; height:272px; padding:0; border-radius:0; background-image:url('minecraft/textures/gui/container/creative_inventory/tab_items.png'); background-size:512px 512px; background-repeat:no-repeat; image-rendering:pixelated; box-shadow:0 24px 70px rgba(0,0,0,0.65); color:#3f3f3f; }
     .inventory-head { position:absolute; left:16px; top:8px; right:36px; display:flex; align-items:center; gap:8px; z-index:3; }
     .inventory-head strong { color:#3f3f3f; font:12px var(--mono); text-shadow:1px 1px 0 #ffffff; }
-    #inventorySearch { position:absolute; left:164px; top:10px; width:160px; height:20px; padding:2px 4px; border:0; background:transparent; color:transparent; caret-color:#ffffff; outline:none; font:12px var(--mono); box-shadow:none; z-index:3; }
+    #inventorySearch { position:absolute; left:164px; top:12px; width:160px; height:20px; padding:2px 4px; border:0; background:transparent; color:transparent; caret-color:#ffffff; outline:none; font:12px var(--mono); box-shadow:none; z-index:3; display:none; }
     #inventoryClose { display:none; }
     .inventory-text { position:absolute; left:0; top:0; width:390px; height:272px; pointer-events:none; image-rendering:pixelated; z-index:2; }
     .inventory-tabs { position:absolute; left:0; top:-56px; width:390px; height:64px; overflow:visible; z-index:2; }
@@ -3774,11 +3774,13 @@ function renderCreativeTabs() {
   for (const entry of source) {
     const top = entry.row !== 'BOTTOM';
     const col = entry.column;
+    const rightAligned = ['Saved Hotbars', 'Search Items', 'Operator Utilities', 'Survival Inventory'].includes(entry.name);
+    const tabX = rightAligned ? 195 - 27 * (7 - col) + 1 : 27 * col;
     const tab = document.createElement('button');
     tab.type = 'button';
     tab.className = 'inventory-tab';
     tab.title = entry.name;
-    tab.style.left = `${27 * col * 2}px`;
+    tab.style.left = `${tabX * 2}px`;
     tab.style.top = top ? '0' : '320px';
     const suffix = `${top ? 'top' : 'bottom'}_${entry.name === creativeCategory ? 'selected' : 'unselected'}_${Math.min(7, col + 1)}`;
     tab.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/sprites/container/creative_inventory/tab_${suffix}.png')`;
@@ -3809,6 +3811,10 @@ function updateCreativePanelBackground() {
   const type = selected?.type;
   const file = type === 'SEARCH' ? 'tab_item_search.png' : type === 'INVENTORY' ? 'tab_inventory.png' : 'tab_items.png';
   panel.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/container/creative_inventory/${file}')`;
+  const title = panel.querySelector('.inventory-head strong');
+  if (title) title.style.visibility = type === 'CATEGORY' ? 'visible' : 'hidden';
+  const search = document.getElementById('inventorySearch');
+  if (search) search.style.display = type === 'SEARCH' ? 'block' : 'none';
 }
 
 function renderInventoryHotbar() {
@@ -3919,6 +3925,31 @@ function initCreativeUI() {
   updateCreativePanelBackground();
   const knob = document.getElementById('inventoryScrollKnob');
   if (knob) knob.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/sprites/container/creative_inventory/scroller.png')`;
+  const scrollTrack = document.querySelector('.inventory-scroll');
+  if (scrollTrack) {
+    const setFromPointer = (clientY) => {
+      const rect = scrollTrack.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientY - rect.top - 15) / Math.max(1, rect.height - 30)));
+      const rows = creativeTabs.find(entry => entry.name === creativeCategory)?.items?.length || 0;
+      const maxPage = Math.max(0, Math.ceil(rows / 45) - 1);
+      creativePage = Math.round(ratio * maxPage);
+      renderCreativeInventory(document.getElementById('inventorySearch')?.value || '');
+    };
+    scrollTrack.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      scrollTrack.setPointerCapture(e.pointerId);
+      const move = ev => setFromPointer(ev.clientY);
+      const up = () => {
+        scrollTrack.removeEventListener('pointermove', move);
+        scrollTrack.removeEventListener('pointerup', up);
+        scrollTrack.removeEventListener('pointercancel', up);
+      };
+      scrollTrack.addEventListener('pointermove', move);
+      scrollTrack.addEventListener('pointerup', up);
+      scrollTrack.addEventListener('pointercancel', up);
+      setFromPointer(e.clientY);
+    });
+  }
   const close = document.getElementById('inventoryClose');
   if (close) close.addEventListener('click', closeCreativeInventory);
   const overlay = document.getElementById('inventoryOverlay');
