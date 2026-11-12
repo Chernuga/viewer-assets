@@ -1950,11 +1950,11 @@ const FACE_DIRS = {
 
 /* ============================= GEOMETRY BATCHING ============================= */
 
-function getBucket(material) {
-  let b = materialBuckets.get(material);
+function getBucket(material, buckets = materialBuckets) {
+  let b = buckets.get(material);
   if (!b) {
     b = { material, faces: [] };
-    materialBuckets.set(material, b);
+    buckets.set(material, b);
   }
   return b;
 }
@@ -2249,7 +2249,7 @@ function applyUvLock(quadUVs, faceName, q) {
   });
 }
 
-function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey, uvLock = false, rotX = 0, rotY = 0, facing = null) {
+function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, overrideMaterial, translucent, blockKey, uvLock = false, rotX = 0, rotY = 0, facing = null, bucketMap = materialBuckets) {
   const from = el.from;
   const to = el.to;
   const f = [from[0] / 16, from[1] / 16, from[2] / 16];
@@ -2283,7 +2283,7 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
     // Translucent and cutout materials must keep every face: adjacent leaves
     // and glass cells have coincident faces that must not be deduplicated.
     if ((translucent && !translucencyKeepsInternalFaces(blockId)) || isCutoutBlock(blockId)) material.userData.noFaceDedup = true;
-    const bucket = getBucket(material);
+    const bucket = getBucket(material, bucketMap);
 
     const rawUv = face.uv ? face.uv : getDefaultUV(faceName, from, to);
     const u1 = rawUv[0] / 16, v1 = 1 - rawUv[1] / 16, u2 = rawUv[2] / 16, v2 = 1 - rawUv[3] / 16;
@@ -3625,6 +3625,180 @@ function creativeLabel(id) {
   return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+const creativeIcon3DCache = new Map();
+let creativeIconRenderQueue = Promise.resolve();
+let creativeIconRenderer = null;
+let creativeIconScene = null;
+let creativeIconCamera = null;
+
+function initCreativeIconRenderer() {
+  if (creativeIconRenderer) return;
+  creativeIconRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: false, preserveDrawingBuffer: true });
+  creativeIconRenderer.setPixelRatio(1);
+  creativeIconRenderer.setSize(64, 64, false);
+  creativeIconRenderer.outputColorSpace = THREE.SRGBColorSpace;
+  creativeIconRenderer.setClearColor(0x000000, 0);
+  creativeIconScene = new THREE.Scene();
+  creativeIconCamera = new THREE.OrthographicCamera(-0.55, 0.55, 0.55, -0.55, 0.1, 20);
+  creativeIconCamera.position.set(0, 0, 5);
+  creativeIconCamera.lookAt(0, 0, 0);
+  creativeIconScene.add(new THREE.AmbientLight(0xffffff, 1.35));
+  const light = new THREE.DirectionalLight(0xffffff, 1.25);
+  light.position.set(-2, 3, 4);
+  creativeIconScene.add(light);
+}
+
+function queueCreativeMenuIcon(item, slot) {
+  const img = document.createElement('img');
+  img.alt = '';
+  slot.appendChild(img);
+  queueCreativeIcon(item.id, item.type, img);
+  if (item.type !== 'block') return;
+  creativeBlockIconCanvas(item.id).then(flat => {
+    if (!flat || !slot.contains(img)) return;
+    flat.className = 'hotbar-block-icon';
+    slot.replaceChild(flat, img);
+  });
+}
+
+async function creativeBlockIcon3DCanvas(id) {
+  if (creativeIcon3DCache.has(id)) return creativeIcon3DCache.get(id);
+  const previous = creativeIconRenderQueue;
+  let release;
+  creativeIconRenderQueue = new Promise(resolve => { release = resolve; });
+  await previous;
+  let result = null;
+  try {
+    const entries = await getBlockModels(id, {}, null);
+    if (!entries?.length) return null;
+    const buckets = new Map();
+    for (const entry of entries) {
+      const data = entry.data;
+      if (!data?.elements) continue;
+      const rotX = entry.x || 0, rotY = entry.y || 0;
+      const q = new THREE.Quaternion();
+      if (rotX || rotY) {
+        q.setFromEuler(new THREE.Euler(
+          THREE.MathUtils.degToRad(-rotX),
+          THREE.MathUtils.degToRad(-rotY),
+          0, 'YXZ'));
+      }
+      const offset = new THREE.Vector3(0.5, 0.5, 0.5);
+      for (const el of data.elements) {
+        collectElementFaces(el, data.textures || {}, id, q, offset, null, null, false, 'icon', entry.uvlock, rotX, rotY, null, buckets);
+      }
+    }
+    if (!buckets.size) return null;
+    initCreativeIconRenderer();
+    const group = new THREE.Group();
+    group.position.set(0, 0, 0);
+    group.rotation.set(THREE.MathUtils.degToRad(30), THREE.MathUtils.degToRad(225), 0);
+    group.scale.setScalar(0.625);
+    for (const bucket of buckets.values()) {
+      const positions = [], normals = [], uvs = [], colors = [], indices = [];
+      let vCount = 0;
+      for (const face of bucket.faces) {
+        if (face.removed) continue;
+        const c = face.corners, u = face.uvs, n = face.normal;
+        const shade = 0.62 + 0.38 * Math.max(0, n[1] * 0.75 + n[2] * 0.25 + 0.15);
+        for (let i = 0; i < 4; i++) {
+          positions.push(c[i][0], c[i][1], c[i][2]);
+          normals.push(n[0], n[1], n[2]);
+          uvs.push(u[i][0], u[i][1]);
+          colors.push(Math.min(1, shade), Math.min(1, shade), Math.min(1, shade));
+        }
+        indices.push(vCount, vCount + 1, vCount + 2, vCount, vCount + 2, vCount + 3);
+        vCount += 4;
+      }
+      if (!vCount) continue;
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geom.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+      geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geom.setIndex(indices);
+      geom.translate(-0.5, -0.5, -0.5);
+      geom.computeBoundingBox();
+      geom.computeBoundingSphere();
+      if (!window.__iconDebug) window.__iconDebug = {};
+      window.__iconDebug.bbox = geom.boundingBox ? {
+        min: geom.boundingBox.min.toArray(), max: geom.boundingBox.max.toArray()
+      } : null;
+      window.__iconDebug.sphere = geom.boundingSphere ? {
+        center: geom.boundingSphere.center.toArray(), radius: geom.boundingSphere.radius
+      } : null;
+      const map = bucket.material.map;
+      if (!map) continue;
+      window.__iconMapDebug = {
+        src: map.image?.src || null,
+        complete: map.image?.complete,
+        width: map.image?.width,
+        height: map.image?.height,
+      };
+      const mat = new THREE.MeshBasicMaterial({
+        map,
+        vertexColors: true,
+        transparent: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.frustumCulled = false;
+      group.add(mesh);
+    }
+    if (!group.children.length) return null;
+    const waitForMap = map => {
+      if (!map || (map.image && map.image.complete)) return Promise.resolve();
+      return new Promise(resolve => {
+        const started = performance.now();
+        const poll = setInterval(() => {
+          if (map.image && map.image.complete) {
+            clearInterval(poll); resolve();
+          } else if (performance.now() - started > 3500) {
+            clearInterval(poll); resolve();
+          }
+        }, 40);
+      });
+    };
+    await Promise.all([...group.children].map(child => waitForMap(child.material?.map)));
+    creativeIconScene.add(group);
+    creativeIconRenderer.render(creativeIconScene, creativeIconCamera);
+    window.__iconDebug = {
+      children: group.children.length,
+      triangles: creativeIconRenderer.info.render.triangles,
+      calls: creativeIconRenderer.info.render.calls,
+      pos: group.position.toArray(),
+      rot: [group.rotation.x, group.rotation.y, group.rotation.z],
+    };
+    const gl = creativeIconRenderer.getContext();
+    const pixels = new Uint8Array(64 * 64 * 4);
+    gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    let alpha = 0;
+    for (let i = 3; i < pixels.length; i += 4) if (pixels[i]) alpha++;
+    window.__iconDebug.alphaPixels = alpha;
+    window.__iconDebug.canvas = [creativeIconRenderer.domElement.width, creativeIconRenderer.domElement.height];
+    const canvas = document.createElement('canvas');
+    canvas.width = 64; canvas.height = 64;
+    const outCtx = canvas.getContext('2d');
+    outCtx.drawImage(creativeIconRenderer.domElement, 0, 0);
+    const outData = outCtx.getImageData(0, 0, 64, 64).data;
+    let visiblePixels = 0;
+    for (let i = 3; i < outData.length; i += 4) if (outData[i]) visiblePixels++;
+    creativeIconScene.remove(group);
+    for (const child of group.children) {
+      child.geometry.dispose();
+      if (child.material.map) child.material.map = null;
+      child.material.dispose();
+    }
+    result = visiblePixels > 20 ? canvas : null;
+  } catch (err) {
+    result = null;
+  } finally {
+    release();
+  }
+  creativeIcon3DCache.set(id, result);
+  return result;
+}
+
 async function creativeBlockIconCanvas(id) {
   const key = `canvas:${id}`;
   if (creativeIconCache.has(key)) return creativeIconCache.get(key);
@@ -3696,13 +3870,18 @@ function queueCreativeHotbarIcon(item, slot) {
   const img = document.createElement('img');
   img.alt = '';
   slot.appendChild(img);
-  creativeBlockIconCanvas(item.id).then(canvas => {
-    if (canvas) {
-      canvas.className = 'hotbar-block-icon';
-      slot.replaceChild(canvas, img);
-    } else {
-      queueCreativeIcon(item.id, item.type, img);
-    }
+  queueCreativeIcon(item.id, item.type, img);
+  creativeBlockIconCanvas(item.id).then(flat => {
+    if (!flat || !slot.contains(img)) return;
+    flat.className = 'hotbar-block-icon';
+    slot.replaceChild(flat, img);
+  });
+  creativeBlockIcon3DCanvas(item.id).then(canvas => {
+    if (!canvas) return;
+    const current = slot.querySelector('.hotbar-block-icon, img');
+    if (!current || current.parentNode !== slot) return;
+    canvas.className = 'hotbar-block-icon';
+    slot.replaceChild(canvas, current);
   });
 }
 
@@ -3877,7 +4056,7 @@ function renderCreativeInventory(filter = '') {
     item.className = 'inventory-item';
     if (!entry) { item.style.visibility = 'hidden'; grid.appendChild(item); continue; }
     item.title = entry.id;
-    queueCreativeHotbarIcon(entry, item);
+    queueCreativeMenuIcon(entry, item);
     item.addEventListener('click', () => {
       const value = { id: entry.id, type: entry.type };
       creativeHotbar[creativeSlot] = value;
@@ -3939,6 +4118,7 @@ function initCreativeUI() {
   window.openCreativeInventory = openCreativeInventory;
   window.closeCreativeInventory = closeCreativeInventory;
   window.isCreativeInventoryOpen = () => creativeInventoryOpen;
+  window.creativeBlockIcon3DCanvas = creativeBlockIcon3DCanvas;
   renderCreativeHotbar();
   renderInventoryHotbar();
   renderCreativeTabs();
