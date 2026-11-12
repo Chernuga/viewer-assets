@@ -63,7 +63,7 @@
     .hotbar-selection { position:absolute; left:0; top:-2px; width:48px; height:46px; background-image:url('minecraft/textures/gui/sprites/hud/hotbar_selection.png'); background-size:48px 46px; background-repeat:no-repeat; image-rendering:pixelated; pointer-events:none; z-index:3; }
     .inventory-overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.55); z-index:60; }
     .inventory-overlay.open { display:flex; }
-    .inventory-panel { position:relative; width:390px; height:272px; padding:0; border-radius:0; background-image:url('minecraft/textures/gui/container/creative_inventory/tab_items.png'); background-size:512px 512px; background-repeat:no-repeat; image-rendering:pixelated; box-shadow:0 24px 70px rgba(0,0,0,0.65); color:#3f3f3f; }
+    .inventory-panel { position:relative; width:390px; height:272px; padding:0; border-radius:0; background-image:url('minecraft/textures/gui/container/creative_inventory/tab_items.png'); background-size:512px 512px; background-repeat:no-repeat; image-rendering:pixelated; box-shadow:0 24px 70px rgba(0,0,0,0.65); color:#3f3f3f; zoom:0.75; }
     .inventory-head { position:absolute; left:16px; top:8px; right:36px; display:flex; align-items:center; gap:8px; z-index:3; }
     .inventory-head strong { color:#3f3f3f; font:12px var(--mono); text-shadow:1px 1px 0 #ffffff; }
     #inventorySearch { position:absolute; left:164px; top:12px; width:160px; height:20px; padding:2px 4px; border:0; background:transparent; color:transparent; caret-color:#ffffff; outline:none; font:12px var(--mono); box-shadow:none; z-index:3; display:none; }
@@ -3781,7 +3781,7 @@ function renderCreativeTabs() {
     tab.className = 'inventory-tab';
     tab.title = entry.name;
     tab.style.left = `${tabX * 2}px`;
-    tab.style.top = top ? '0' : '320px';
+    tab.style.top = top ? '0' : '328px';
     const suffix = `${top ? 'top' : 'bottom'}_${entry.name === creativeCategory ? 'selected' : 'unselected'}_${Math.min(7, col + 1)}`;
     tab.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/sprites/container/creative_inventory/tab_${suffix}.png')`;
     tab.style.backgroundSize = '52px 64px';
@@ -3812,7 +3812,10 @@ function updateCreativePanelBackground() {
   const file = type === 'SEARCH' ? 'tab_item_search.png' : type === 'INVENTORY' ? 'tab_inventory.png' : 'tab_items.png';
   panel.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/container/creative_inventory/${file}')`;
   const title = panel.querySelector('.inventory-head strong');
-  if (title) title.style.visibility = type === 'CATEGORY' ? 'visible' : 'hidden';
+  if (title) {
+    title.style.visibility = type === 'INVENTORY' ? 'hidden' : 'visible';
+    title.textContent = type === 'SEARCH' ? 'Search Items' : type === 'HOTBAR' ? 'Saved Hotbars' : 'Creative Inventory';
+  }
   const search = document.getElementById('inventorySearch');
   if (search) search.style.display = type === 'SEARCH' ? 'block' : 'none';
 }
