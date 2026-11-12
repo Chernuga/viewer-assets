@@ -2567,7 +2567,32 @@ function createBlockEntityFallbackModel(data) {
   };
 }
 
-async function getBlockModels(blockId, properties, pos) {
+function movingPistonMovedState(nbt) {
+  const raw = nbt?.match(/blockstate\s*:\s*"([^"]+)"/i)?.[1];
+  if (!raw) return null;
+  let spec = raw.replace('minecraft:', '');
+  let id = spec, props = {};
+  const bracket = spec.indexOf('[');
+  if (bracket !== -1) {
+    id = spec.substring(0, bracket);
+    const body = spec.substring(bracket + 1, spec.length - 1);
+    for (const pair of body.split(',')) {
+      const [k, v] = pair.split('=');
+      if (k && v) props[k.trim()] = v.trim();
+    }
+  }
+  return [id.toLowerCase(), props];
+}
+
+async function getBlockModels(blockId, properties, pos, nbt = null) {
+  if (blockId === 'moving_piston') {
+    const moved = movingPistonMovedState(nbt);
+    if (moved) return getBlockModels(moved[0], moved[1], pos);
+    return getBlockModels('piston_head', {
+      facing: properties?.facing || 'north',
+      type: properties?.type || 'normal',
+    }, pos);
+  }
   const stateData = await loadBlockstate(blockId);
   const defaults = getDefaultProperties(stateData, blockId.replace('minecraft:', ''));
   const filledProps = { ...defaults, ...properties };
@@ -2720,7 +2745,7 @@ async function build() {
     const [id, props, nbt] = parseBlockSpec(spec);
     const [xStr, yStr, zStr] = key.split(',');
     const pos = { x: parseInt(xStr, 10), y: parseInt(yStr, 10), z: parseInt(zStr, 10) };
-    const modelEntries = await getBlockModels(id, props, pos);
+    const modelEntries = await getBlockModels(id, props, pos, nbt);
     blockInfo.set(key, { id, pos, entries: modelEntries, properties: props, nbt });
     physicsBlocks.set(key, id);
     physicsStates.set(key, props);
