@@ -77,10 +77,11 @@
     .inventory-item:hover { background:rgba(255,255,255,0.55); }
     .inventory-item img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
     .inventory-item .hotbar-block-icon { position:static; left:auto; top:auto; width:32px; height:32px; image-rendering:pixelated; pointer-events:none; }
-    .inventory-player { position:absolute; left:146px; top:12px; width:64px; height:86px; display:none; image-rendering:pixelated; z-index:1; pointer-events:none; }
+    .inventory-panel.inventory-mode { width:352px; height:332px; background-image:url('minecraft/textures/gui/container/inventory.png'); background-size:352px 332px; }
     .inventory-panel.inventory-mode .inventory-grid,
-    .inventory-panel.inventory-mode .inventory-hotbar { visibility:hidden; }
-    .inventory-panel.inventory-mode .inventory-player { display:block; }
+    .inventory-panel.inventory-mode .inventory-hotbar { display:none; }
+    .inventory-panel.inventory-mode .inventory-player { display:block; left:52px; top:16px; width:98px; height:140px; }
+    .inventory-player { position:absolute; left:146px; top:12px; width:64px; height:86px; display:none; image-rendering:pixelated; z-index:1; pointer-events:none; }
     .inventory-item span { display:none; }
     .inventory-hotbar { position:absolute; left:18px; top:224px; width:324px; height:36px; display:grid; grid-template-columns:repeat(9,36px); gap:0; z-index:2; }
     .inventory-hotbar .creative-slot { position:relative; left:auto; top:auto; width:36px; height:36px; border:0; background:transparent; box-shadow:none; }
@@ -4109,8 +4110,11 @@ function updateCreativePanelBackground() {
   if (!panel) return;
   const selected = creativeTabs.find(tab => tab.name === creativeCategory);
   const type = selected?.type;
-  const file = type === 'SEARCH' ? 'tab_item_search.png' : type === 'INVENTORY' ? 'tab_inventory.png' : 'tab_items.png';
-  panel.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/container/creative_inventory/${file}')`;
+  const file = type === 'INVENTORY'
+    ? 'container/inventory.png'
+    : `container/creative_inventory/${type === 'SEARCH' ? 'tab_item_search.png' : 'tab_items.png'}`;
+  panel.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/${file}')`;
+  panel.style.backgroundSize = type === 'INVENTORY' ? '352px 332px' : '512px 512px';
   const title = panel.querySelector('.inventory-head strong');
   if (title) {
     title.style.visibility = type === 'INVENTORY' ? 'hidden' : 'visible';
