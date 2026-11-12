@@ -76,6 +76,7 @@
     .inventory-item { width:36px; min-height:36px; padding:0; border:0; background:transparent; color:transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; overflow:hidden; box-shadow:none; }
     .inventory-item:hover { background:rgba(255,255,255,0.55); }
     .inventory-item img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .inventory-item .hotbar-block-icon { position:static; left:auto; top:auto; width:32px; height:32px; image-rendering:pixelated; pointer-events:none; }
     .inventory-item span { display:none; }
     .inventory-hotbar { position:absolute; left:18px; top:224px; width:324px; height:36px; display:grid; grid-template-columns:repeat(9,36px); gap:0; z-index:2; }
     .inventory-hotbar .creative-slot { position:relative; left:auto; top:auto; width:36px; height:36px; border:0; background:transparent; box-shadow:none; }
@@ -227,6 +228,9 @@ const CONFIG_DEFAULTS = {
     fov: 70,
     mouseSensitivity: 0.5,
     startFlying: true,
+  },
+  ui: {
+    creativeGuiScale: 1.5,
   },
 };
 
@@ -3588,6 +3592,7 @@ let creativeItems = [];
 let creativeTabs = [];
 let creativeCategory = 'Building Blocks';
 let creativePage = 0;
+let creativeGuiScale = 1.5;
 let creativeHotbar = CREATIVE_HOTBAR_DEFAULT.slice();
 let creativeSlot = 0;
 let creativeSelectedItem = creativeHotbar[0];
@@ -3783,7 +3788,7 @@ function renderCreativeTabs() {
     tab.className = 'inventory-tab';
     tab.title = entry.name;
     tab.style.left = `${tabX * 2}px`;
-    tab.style.top = top ? '0' : '328px';
+    tab.style.top = top ? '0' : '320px';
     const suffix = `${top ? 'top' : 'bottom'}_${entry.name === creativeCategory ? 'selected' : 'unselected'}_${Math.min(7, col + 1)}`;
     tab.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/sprites/container/creative_inventory/tab_${suffix}.png')`;
     tab.style.backgroundSize = '52px 64px';
@@ -3856,12 +3861,13 @@ function renderCreativeInventory(filter = '') {
       ? creativeItems
       : Object.keys(blockProperties).filter(id => id !== 'air').map(id => ({ id, type: 'block', cat: 'Building Blocks' }));
   const rows = source
-    .filter(item => !query || item.id.includes(query))
-    .sort((a, b) => a.id.localeCompare(b.id));
-  const perPage = 45;
-  const maxPage = Math.max(0, Math.ceil(rows.length / perPage) - 1);
-  creativePage = Math.max(0, Math.min(creativePage, maxPage));
-  const pageRows = rows.slice(creativePage * perPage, creativePage * perPage + perPage);
+    .filter(item => !query || item.id.includes(query));
+  const cols = 9;
+  const visibleRows = 5;
+  const perPage = cols * visibleRows;
+  const maxRow = Math.max(0, Math.ceil(rows.length / cols) - visibleRows);
+  creativePage = Math.max(0, Math.min(Math.round(creativePage), maxRow));
+  const pageRows = rows.slice(creativePage * cols, creativePage * cols + perPage);
 
   grid.textContent = '';
   for (let i = 0; i < perPage; i++) {
@@ -3871,10 +3877,7 @@ function renderCreativeInventory(filter = '') {
     item.className = 'inventory-item';
     if (!entry) { item.style.visibility = 'hidden'; grid.appendChild(item); continue; }
     item.title = entry.id;
-    const img = document.createElement('img');
-    img.alt = '';
-    queueCreativeIcon(entry.id, entry.type, img);
-    item.appendChild(img);
+    queueCreativeHotbarIcon(entry, item);
     item.addEventListener('click', () => {
       const value = { id: entry.id, type: entry.type };
       creativeHotbar[creativeSlot] = value;
@@ -3888,9 +3891,9 @@ function renderCreativeInventory(filter = '') {
   const knob = document.getElementById('inventoryScrollKnob');
   if (knob) {
     const track = Math.max(0, 224 - 30);
-    const offset = maxPage ? (creativePage / maxPage) * track : 0;
+    const offset = maxRow ? (creativePage / maxRow) * track : 0;
     knob.style.transform = `translateY(${offset}px)`;
-    knob.style.visibility = maxPage ? 'visible' : 'hidden';
+    knob.style.visibility = maxRow ? 'visible' : 'hidden';
   }
 }
 
@@ -3921,7 +3924,21 @@ function closeCreativeInventory() {
   }
 }
 
+function setCreativeGuiScale(scale, persist = false) {
+  creativeGuiScale = Math.max(0.75, Math.min(4, Number(scale) || 1.5));
+  const panel = document.querySelector('.inventory-panel');
+  if (panel) panel.style.zoom = String(creativeGuiScale / 2);
+  if (persist) {
+    try { localStorage.setItem('viewerCreativeGuiScale', String(creativeGuiScale)); } catch {}
+  }
+}
+
 function initCreativeUI() {
+  setCreativeGuiScale(CONFIG?.ui?.creativeGuiScale ?? 1.5);
+  window.setCreativeGuiScale = setCreativeGuiScale;
+  window.openCreativeInventory = openCreativeInventory;
+  window.closeCreativeInventory = closeCreativeInventory;
+  window.isCreativeInventoryOpen = () => creativeInventoryOpen;
   renderCreativeHotbar();
   renderInventoryHotbar();
   renderCreativeTabs();
@@ -3935,9 +3952,9 @@ function initCreativeUI() {
     const setFromPointer = (clientY) => {
       const rect = scrollTrack.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (clientY - rect.top - 15) / Math.max(1, rect.height - 30)));
-      const rows = creativeTabs.find(entry => entry.name === creativeCategory)?.items?.length || 0;
-      const maxPage = Math.max(0, Math.ceil(rows / 45) - 1);
-      creativePage = Math.round(ratio * maxPage);
+      const itemCount = creativeTabs.find(entry => entry.name === creativeCategory)?.items?.length || 0;
+      const maxRow = Math.max(0, Math.ceil(itemCount / 9) - 5);
+      creativePage = Math.round(ratio * maxRow);
       renderCreativeInventory(document.getElementById('inventorySearch')?.value || '');
     };
     scrollTrack.addEventListener('pointerdown', (e) => {

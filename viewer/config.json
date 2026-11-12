@@ -75,6 +75,9 @@
     "fov": 70,
     "mouseSensitivity": 0.5,
     "startFlying": true
+  },
+  "ui": {
+    "creativeGuiScale": 1.5
   }
 }
 
