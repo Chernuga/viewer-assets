@@ -65,11 +65,11 @@
     .inventory-overlay.open { display:flex; }
     .inventory-panel { position:relative; width:390px; height:272px; padding:0; border-radius:0; background-image:url('minecraft/textures/gui/container/creative_inventory/tab_items.png'); background-size:512px 512px; background-repeat:no-repeat; image-rendering:pixelated; box-shadow:0 24px 70px rgba(0,0,0,0.65); color:#3f3f3f; zoom:0.75; }
     .inventory-head { position:absolute; left:16px; top:8px; right:36px; display:flex; align-items:center; gap:8px; z-index:3; }
-    .inventory-head strong { color:#3f3f3f; font:12px var(--mono); text-shadow:1px 1px 0 #ffffff; }
+    .inventory-head strong { display:none; }
     #inventorySearch { position:absolute; left:164px; top:12px; width:160px; height:20px; padding:2px 4px; border:0; background:transparent; color:transparent; caret-color:#ffffff; outline:none; font:12px var(--mono); box-shadow:none; z-index:3; display:none; }
     #inventoryClose { display:none; }
     .inventory-text { position:absolute; left:0; top:0; width:390px; height:272px; pointer-events:none; image-rendering:pixelated; z-index:2; }
-    .inventory-tabs { position:absolute; left:0; top:-56px; width:390px; height:64px; overflow:visible; z-index:2; }
+    .inventory-tabs { position:absolute; left:0; top:-56px; width:390px; height:64px; overflow:visible; z-index:8; }
     .inventory-tab { position:absolute; width:52px; height:64px; padding:0; border:0; background:transparent; cursor:pointer; color:transparent; font-size:0; }
     .inventory-tab img { position:absolute; left:10px; top:18px; width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
     .inventory-grid { position:absolute; left:18px; top:36px; width:324px; height:180px; display:grid; grid-template-columns:repeat(9, 36px); grid-auto-rows:36px; gap:0; overflow:hidden; background:none; border:0; box-shadow:none; padding:0; }
@@ -77,6 +77,10 @@
     .inventory-item:hover { background:rgba(255,255,255,0.55); }
     .inventory-item img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
     .inventory-item .hotbar-block-icon { position:static; left:auto; top:auto; width:32px; height:32px; image-rendering:pixelated; pointer-events:none; }
+    .inventory-player { position:absolute; left:146px; top:12px; width:64px; height:86px; display:none; image-rendering:pixelated; z-index:1; pointer-events:none; }
+    .inventory-panel.inventory-mode .inventory-grid,
+    .inventory-panel.inventory-mode .inventory-hotbar { visibility:hidden; }
+    .inventory-panel.inventory-mode .inventory-player { display:block; }
     .inventory-item span { display:none; }
     .inventory-hotbar { position:absolute; left:18px; top:224px; width:324px; height:36px; display:grid; grid-template-columns:repeat(9,36px); gap:0; z-index:2; }
     .inventory-hotbar .creative-slot { position:relative; left:auto; top:auto; width:36px; height:36px; border:0; background:transparent; box-shadow:none; }
@@ -139,6 +143,7 @@
         </div>
         <div id="inventoryTabs" class="inventory-tabs"></div>
         <canvas id="inventoryText" class="inventory-text" width="390" height="272"></canvas>
+        <canvas id="inventoryPlayer" class="inventory-player" width="64" height="86"></canvas>
         <div id="inventoryGrid" class="inventory-grid"></div>
         <div id="inventoryHotbar" class="inventory-hotbar"></div>
         <div class="inventory-scroll"><div id="inventoryScrollKnob" class="inventory-scroll-knob"></div></div>
@@ -3625,11 +3630,119 @@ function creativeLabel(id) {
   return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function centerCreativeIcon(source) {
+  if (!source) return source;
+  const ctx = source.getContext('2d');
+  const data = ctx.getImageData(0, 0, source.width, source.height).data;
+  let minX = source.width, minY = source.height, maxX = -1, maxY = -1;
+  for (let y = 0; y < source.height; y++) {
+    for (let x = 0; x < source.width; x++) {
+      if (data[(y * source.width + x) * 4 + 3]) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < minX || maxY < minY) return source;
+  const out = document.createElement('canvas');
+  out.width = source.width; out.height = source.height;
+  const octx = out.getContext('2d');
+  octx.imageSmoothingEnabled = false;
+  const dx = Math.round((source.width - (maxX - minX + 1)) / 2) - minX;
+  const dy = Math.round((source.height - (maxY - minY + 1)) / 2) - minY;
+  octx.drawImage(source, dx, dy);
+  return out;
+}
+
 const creativeIcon3DCache = new Map();
 let creativeIconRenderQueue = Promise.resolve();
 let creativeIconRenderer = null;
 let creativeIconScene = null;
 let creativeIconCamera = null;
+let inventoryPlayerRenderer = null;
+
+async function renderInventoryPlayer() {
+  const canvas = document.getElementById('inventoryPlayer');
+  if (!canvas || canvas.dataset.ready === '1') return;
+  try {
+    if (!inventoryPlayerRenderer) {
+      inventoryPlayerRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: false, preserveDrawingBuffer: true });
+      inventoryPlayerRenderer.setPixelRatio(1);
+      inventoryPlayerRenderer.setSize(64, 86, false);
+      inventoryPlayerRenderer.outputColorSpace = THREE.SRGBColorSpace;
+      inventoryPlayerRenderer.setClearColor(0x000000, 0);
+    }
+    const skin = getTexture('entity/player/wide/steve');
+    const waitImage = () => new Promise(resolve => {
+      if (skin.image?.complete) return resolve();
+      const start = performance.now();
+      const timer = setInterval(() => {
+        if (skin.image?.complete || performance.now() - start > 3000) {
+          clearInterval(timer); resolve();
+        }
+      }, 40);
+    });
+    await waitImage();
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-10, 10, 20, -20, 0.1, 100);
+    camera.position.set(0, 16, 40);
+    camera.lookAt(0, 16, 0);
+    scene.add(new THREE.AmbientLight(0xffffff, 1.4));
+    const light = new THREE.DirectionalLight(0xffffff, 0.8);
+    light.position.set(-4, 12, 20);
+    scene.add(light);
+
+    function box(w, h, d, x, y, z, rects) {
+      const geom = new THREE.BoxGeometry(w, h, d);
+      const uv = geom.attributes.uv;
+      for (let f = 0; f < 6; f++) {
+        const [rx, ry, rw, rh] = rects[f];
+        const u0 = rx / 64, u1 = (rx + rw) / 64;
+        const v0 = 1 - (ry + rh) / 64, v1 = 1 - ry / 64;
+        const uvOff = f * 4;
+        uv.setXY(uvOff + 0, u1, v0);
+        uv.setXY(uvOff + 1, u0, v0);
+        uv.setXY(uvOff + 2, u0, v1);
+        uv.setXY(uvOff + 3, u1, v1);
+      }
+      const mat = new THREE.MeshBasicMaterial({ map: skin, transparent: true, alphaTest: 0.1, side: THREE.DoubleSide });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.position.set(x, y, z);
+      scene.add(mesh);
+    }
+    // Minecraft 64x64 wide player skin layout. Face order: right, left, top, bottom, front, back.
+    box(8, 8, 8, 0, 28, 0, [
+      [0, 8, 8, 8], [16, 8, 8, 8], [8, 0, 8, 8], [16, 0, 8, 8], [8, 8, 8, 8], [24, 8, 8, 8],
+    ]);
+    box(8, 12, 4, 0, 18, 0, [
+      [16, 20, 4, 12], [28, 20, 4, 12], [20, 16, 8, 4], [28, 16, 8, 4], [20, 20, 8, 12], [32, 20, 8, 12],
+    ]);
+    box(4, 12, 4, -6, 18, 0, [
+      [40, 20, 4, 12], [48, 20, 4, 12], [44, 16, 4, 4], [48, 16, 4, 4], [44, 20, 4, 12], [52, 20, 4, 12],
+    ]);
+    box(4, 12, 4, 6, 18, 0, [
+      [40, 20, 4, 12], [48, 20, 4, 12], [44, 16, 4, 4], [48, 16, 4, 4], [44, 20, 4, 12], [52, 20, 4, 12],
+    ]);
+    box(4, 12, 4, -2, 6, 0, [
+      [0, 20, 4, 12], [8, 20, 4, 12], [4, 16, 4, 4], [8, 16, 4, 4], [4, 20, 4, 12], [12, 20, 4, 12],
+    ]);
+    box(4, 12, 4, 2, 6, 0, [
+      [0, 20, 4, 12], [8, 20, 4, 12], [4, 16, 4, 4], [8, 16, 4, 4], [4, 20, 4, 12], [12, 20, 4, 12],
+    ]);
+    inventoryPlayerRenderer.render(scene, camera);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(inventoryPlayerRenderer.domElement, 0, 0);
+    for (const child of [...scene.children]) {
+      if (child.isMesh) { child.geometry.dispose(); child.material.dispose(); }
+    }
+    canvas.dataset.ready = '1';
+  } catch (err) {
+    canvas.dataset.ready = '1';
+  }
+}
 
 function initCreativeIconRenderer() {
   if (creativeIconRenderer) return;
@@ -3789,7 +3902,7 @@ async function creativeBlockIcon3DCanvas(id) {
       if (child.material.map) child.material.map = null;
       child.material.dispose();
     }
-    result = visiblePixels > 20 ? canvas : null;
+    result = visiblePixels > 20 ? centerCreativeIcon(canvas) : null;
   } catch (err) {
     result = null;
   } finally {
@@ -3855,6 +3968,7 @@ async function creativeBlockIconCanvas(id) {
     quad(frontImg || sideImg, [1, 8], [16, 15], [16, 31], [1, 24], 0.18);
     quad(sideImg, [16, 15], [31, 8], [31, 24], [16, 31], 0.32);
   } catch (err) { canvas = null; }
+  canvas = centerCreativeIcon(canvas);
   creativeIconCache.set(key, canvas);
   return canvas;
 }
@@ -4004,6 +4118,63 @@ function updateCreativePanelBackground() {
   }
   const search = document.getElementById('inventorySearch');
   if (search) search.style.display = type === 'SEARCH' ? 'block' : 'none';
+  panel.classList.toggle('inventory-mode', type === 'INVENTORY');
+  if (type === 'INVENTORY') renderInventoryPlayer();
+  renderInventoryText();
+}
+
+let minecraftFontImage = null;
+function loadMinecraftFont() {
+  if (minecraftFontImage) return;
+  minecraftFontImage = new Image();
+  minecraftFontImage.crossOrigin = 'anonymous';
+  minecraftFontImage.onload = () => renderInventoryText();
+  minecraftFontImage.src = `${ASSET_BASE}/textures/font/ascii.png`;
+}
+
+function drawMinecraftText(ctx, text, x, y, scale, color) {
+  const img = minecraftFontImage;
+  if (!img?.complete) return;
+  const glyph = 8;
+  const advance = 6;
+  const tmp = document.createElement('canvas');
+  tmp.width = Math.max(1, ctx.canvas.width);
+  tmp.height = Math.max(1, ctx.canvas.height);
+  const tctx = tmp.getContext('2d');
+  tctx.imageSmoothingEnabled = false;
+  let tx = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 32) { tx += 4 * scale; continue; }
+    const col = code % 16;
+    const row = Math.floor(code / 16);
+    tctx.drawImage(img, col * glyph, row * glyph, glyph, glyph, tx, 0, glyph * scale, glyph * scale);
+    tx += advance * scale;
+  }
+  tctx.globalCompositeOperation = 'source-in';
+  tctx.fillStyle = color;
+  tctx.fillRect(0, 0, tmp.width, tmp.height);
+  ctx.drawImage(tmp, x, y);
+}
+
+function renderInventoryText() {
+  loadMinecraftFont();
+  const canvas = document.getElementById('inventoryText');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  const selected = creativeTabs.find(tab => tab.name === creativeCategory);
+  const type = selected?.type;
+  if (type !== 'INVENTORY') {
+    const label = type === 'SEARCH' ? 'Search Items' : type === 'HOTBAR' ? 'Saved Hotbars' : 'Creative Inventory';
+    drawMinecraftText(ctx, label, 16, 12, 2, '#404040');
+  }
+  if (type === 'SEARCH') {
+    const search = document.getElementById('inventorySearch');
+    const text = search?.value || '';
+    if (text) drawMinecraftText(ctx, text, 168, 14, 2, '#ffffff');
+  }
 }
 
 function renderInventoryHotbar() {
@@ -4119,6 +4290,13 @@ function initCreativeUI() {
   window.closeCreativeInventory = closeCreativeInventory;
   window.isCreativeInventoryOpen = () => creativeInventoryOpen;
   window.creativeBlockIcon3DCanvas = creativeBlockIcon3DCanvas;
+  window.selectCreativeTab = (name) => {
+    creativeCategory = name;
+    creativePage = 0;
+    updateCreativePanelBackground();
+    renderCreativeTabs();
+    renderCreativeInventory();
+  };
   renderCreativeHotbar();
   renderInventoryHotbar();
   renderCreativeTabs();
@@ -4171,7 +4349,7 @@ function initCreativeUI() {
     renderInventoryHotbar();
   }, { passive: false });
   const search = document.getElementById('inventorySearch');
-  if (search) search.addEventListener('input', () => { creativePage = 0; renderCreativeInventory(search.value); });
+  if (search) search.addEventListener('input', () => { creativePage = 0; renderCreativeInventory(search.value); renderInventoryText(); });
 }
 
 function updateHud() {
