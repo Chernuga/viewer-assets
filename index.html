@@ -63,38 +63,40 @@
     .hotbar-selection { position:absolute; left:0; top:-2px; width:48px; height:46px; background-image:url('minecraft/textures/gui/sprites/hud/hotbar_selection.png'); background-size:48px 46px; background-repeat:no-repeat; image-rendering:pixelated; pointer-events:none; z-index:3; }
     .inventory-overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.55); z-index:60; }
     .inventory-overlay.open { display:flex; }
-    .inventory-panel { position:relative; width:390px; height:272px; padding:0; border-radius:0; background-image:url('minecraft/textures/gui/container/creative_inventory/tab_items.png'); background-size:512px 512px; background-repeat:no-repeat; image-rendering:pixelated; box-shadow:0 24px 70px rgba(0,0,0,0.65); color:#3f3f3f; zoom:0.75; }
+    .inventory-panel { position:relative; width:var(--screen-w,390px); height:var(--screen-h,272px); padding:0; border-radius:0; background-image:url('minecraft/textures/gui/container/creative_inventory/tab_items.png'); background-size:var(--bg-size,512px 512px); background-repeat:no-repeat; image-rendering:pixelated; box-shadow:0 24px 70px rgba(0,0,0,0.65); color:#3f3f3f; }
     .inventory-head { position:absolute; left:16px; top:8px; right:36px; display:flex; align-items:center; gap:8px; z-index:3; }
     .inventory-head strong { display:none; }
     #inventorySearch { position:absolute; left:164px; top:12px; width:160px; height:20px; padding:2px 4px; border:0; background:transparent; color:transparent; caret-color:#ffffff; outline:none; font:12px var(--mono); box-shadow:none; z-index:3; display:none; }
     #inventoryClose { display:none; }
-    .inventory-text { position:absolute; left:0; top:0; width:390px; height:272px; pointer-events:none; image-rendering:pixelated; z-index:2; }
-    .inventory-tabs { position:absolute; left:0; top:-56px; width:390px; height:64px; overflow:visible; z-index:8; }
-    .inventory-tab { position:absolute; width:52px; height:64px; padding:0; border:0; background:transparent; cursor:pointer; color:transparent; font-size:0; }
-    .inventory-tab img { position:absolute; left:10px; top:18px; width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
-    .inventory-grid { position:absolute; left:18px; top:36px; width:324px; height:180px; display:grid; grid-template-columns:repeat(9, 36px); grid-auto-rows:36px; gap:0; overflow:hidden; background:none; border:0; box-shadow:none; padding:0; }
-    .inventory-item { width:36px; min-height:36px; padding:0; border:0; background:transparent; color:transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; overflow:hidden; box-shadow:none; }
+    .inventory-text { position:absolute; left:0; top:0; width:var(--screen-w,390px); height:var(--screen-h,272px); pointer-events:none; image-rendering:pixelated; z-index:4; }
+    .inventory-tabs { position:absolute; left:0; top:0; width:var(--screen-w,390px); height:0; overflow:visible; z-index:8; }
+    .inventory-tab { position:absolute; width:var(--tab-w,52px); height:var(--tab-h,64px); padding:0; border:0; background:transparent; cursor:pointer; color:transparent; font-size:0; }
+    .inventory-tab img { position:absolute; left:var(--tab-icon-x,10px); top:var(--tab-icon-y,18px); width:var(--icon-size,32px); height:var(--icon-size,32px); object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .inventory-grid { position:absolute; left:var(--grid-x,18px); top:var(--grid-y,36px); width:var(--grid-w,324px); height:var(--grid-h,180px); display:grid; grid-template-columns:repeat(var(--grid-cols,9), var(--slot-size,36px)); grid-auto-rows:var(--slot-size,36px); gap:0; overflow:hidden; background:none; border:0; box-shadow:none; padding:0; }
+    .inventory-item { width:100%; height:100%; padding:0; border:0; background:transparent; color:transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; overflow:hidden; box-shadow:none; }
     .inventory-item:hover { background:rgba(255,255,255,0.55); }
-    .inventory-item img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
-    .inventory-item .hotbar-block-icon { position:static; left:auto; top:auto; width:32px; height:32px; image-rendering:pixelated; pointer-events:none; }
-    .inventory-panel.inventory-mode { width:352px; height:332px; background-image:url('minecraft/textures/gui/container/inventory.png'); background-size:352px 332px; }
+    .inventory-item img { width:var(--icon-size,32px); height:var(--icon-size,32px); object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .inventory-item .hotbar-block-icon { position:static; left:auto; top:auto; width:var(--icon-size,32px); height:var(--icon-size,32px); image-rendering:pixelated; pointer-events:none; }
     .inventory-panel.inventory-mode .inventory-grid,
-    .inventory-panel.inventory-mode .inventory-hotbar { display:none; }
+    .inventory-panel.inventory-mode .inventory-hotbar,
     .inventory-panel.inventory-mode .inventory-scroll { display:none; }
-    .inventory-panel.inventory-mode .inventory-player { display:block; left:52px; top:16px; width:98px; height:140px; }
     .creative-cursor { position:fixed; width:36px; height:36px; pointer-events:none; z-index:80; display:none; }
     .creative-cursor img, .creative-cursor canvas { width:32px; height:32px; position:absolute; left:2px; top:2px; image-rendering:pixelated; }
     .creative-cursor .count { position:absolute; right:1px; bottom:0; color:#fff; font:11px var(--mono); text-shadow:1px 1px #000; }
     .creative-tooltip { position:fixed; z-index:81; display:none; padding:3px 5px; background:rgba(16,0,16,0.94); border:1px solid #2d0a63; color:#fff; font:12px var(--mono); pointer-events:none; white-space:nowrap; }
-    .inventory-player { position:absolute; left:146px; top:12px; width:64px; height:86px; display:none; image-rendering:pixelated; z-index:1; pointer-events:none; }
+    .inventory-player { position:absolute; left:146px; top:12px; width:64px; height:86px; display:none; image-rendering:pixelated; z-index:2; pointer-events:none; }
     .inventory-item span { display:none; }
-    .inventory-hotbar { position:absolute; left:18px; top:224px; width:324px; height:36px; display:grid; grid-template-columns:repeat(9,36px); gap:0; z-index:2; }
-    .inventory-hotbar .creative-slot { position:relative; left:auto; top:auto; width:36px; height:36px; border:0; background:transparent; box-shadow:none; }
-    .inventory-hotbar .creative-slot img { left:2px; top:2px; width:32px; height:32px; }
+    .inventory-hotbar { position:absolute; left:var(--hotbar-x,18px); top:var(--hotbar-y,224px); width:var(--hotbar-w,324px); height:var(--slot-size,36px); display:grid; grid-template-columns:repeat(var(--hotbar-cols,9),var(--slot-size,36px)); gap:0; z-index:2; }
+    .inventory-hotbar .creative-slot { position:relative; left:auto; top:auto; width:var(--slot-size,36px); height:var(--slot-size,36px); border:0; background:transparent; box-shadow:none; }
+    .inventory-hotbar .creative-slot img { left:var(--icon-inset,2px); top:var(--icon-inset,2px); width:var(--icon-size,32px); height:var(--icon-size,32px); }
     .inventory-hotbar .creative-slot.selected { border:0; box-shadow:none; }
     .inventory-hotbar .creative-slot .slot-num { display:none; }
-    .inventory-scroll { position:absolute; left:350px; top:36px; width:24px; height:224px; z-index:2; }
-    .inventory-scroll-knob { width:24px; height:30px; background-image:url('minecraft/textures/gui/sprites/container/creative_inventory/scroller.png'); background-size:24px 30px; image-rendering:pixelated; cursor:ns-resize; }
+    .inventory-scroll { position:absolute; left:var(--scroll-x,350px); top:var(--scroll-y,36px); width:var(--scroll-w,24px); height:var(--scroll-h,224px); z-index:2; }
+    .inventory-scroll-knob { width:var(--scroll-w,24px); height:var(--scroll-thumb,30px); background-image:url('minecraft/textures/gui/sprites/container/creative_inventory/scroller.png'); background-size:var(--scroll-w,24px) var(--scroll-thumb,30px); image-rendering:pixelated; cursor:ns-resize; }
+    .inventory-slot-layer { position:absolute; inset:0; z-index:2; display:none; pointer-events:none; }
+    .inventory-panel.inventory-mode .inventory-slot-layer { display:block; }
+    .inventory-slot { position:absolute; border:0; background:transparent; cursor:pointer; pointer-events:auto; }
+    .inventory-slot:hover { background:rgba(255,255,255,0.45); }
     body.inventory-open .creative-bar { display:none; }
     body.touch .creative-bar { bottom:8px; }
   </style>
@@ -151,6 +153,7 @@
         <canvas id="inventoryPlayer" class="inventory-player" width="64" height="86"></canvas>
         <div id="inventoryGrid" class="inventory-grid"></div>
         <div id="inventoryHotbar" class="inventory-hotbar"></div>
+        <div id="inventorySlotLayer" class="inventory-slot-layer"></div>
         <div class="inventory-scroll"><div id="inventoryScrollKnob" class="inventory-scroll-knob"></div></div>
         <div id="creativeCursor" class="creative-cursor"><img alt=""><span class="count"></span></div>
         <div id="creativeTooltip" class="creative-tooltip"></div>
@@ -3605,6 +3608,37 @@ let creativeTabs = [];
 let creativeCategory = 'Building Blocks';
 let creativePage = 0;
 let creativeGuiScale = 1.5;
+
+const CREATIVE_LAYOUTS = {
+  creative: {
+    width: 195, height: 136,
+    background: 'container/creative_inventory/tab_items.png',
+    grid: { x: 9, y: 18, cols: 9, rows: 5, slot: 18 },
+    hotbar: { x: 9, y: 112, cols: 9, slot: 18 },
+    search: { x: 82, y: 6, w: 80, h: 9 },
+    scroll: { x: 175, y: 18, w: 12, h: 112, thumb: 15 },
+    title: { x: 8, y: 6 },
+    tabs: { width: 26, height: 32, spacing: 27, top: -32, bottom: 136, drawTop: -28, drawBottom: 132 },
+    player: null,
+    inventorySlots: [],
+  },
+  inventory: {
+    width: 176, height: 166,
+    background: 'container/inventory.png',
+    title: { x: 97, y: 6 },
+    player: { x: 26, y: 8, w: 49, h: 70 },
+    tabs: { width: 26, height: 32, spacing: 27, top: -32, bottom: 166, drawTop: -28, drawBottom: 162 },
+    grid: null, hotbar: null, search: null, scroll: null,
+    inventorySlots: [
+      { kind: 'result', x: 154, y: 28 },
+      { kind: 'craft', x: 98, y: 18, cols: 2, rows: 2 },
+      { kind: 'armor', x: 8, y: 8, rows: 4 },
+      { kind: 'main', x: 8, y: 84, cols: 9, rows: 3 },
+      { kind: 'hotbar', x: 8, y: 142, cols: 9 },
+      { kind: 'offhand', x: 77, y: 62 },
+    ],
+  },
+};
 let creativeHotbar = CREATIVE_HOTBAR_DEFAULT.slice();
 let creativeSlot = 0;
 let creativeSelectedItem = creativeHotbar[0];
@@ -4117,20 +4151,24 @@ function renderCreativeTabs() {
   if (!tabs) return;
   tabs.textContent = '';
   const source = creativeTabs.length ? creativeTabs : CREATIVE_CATEGORIES.map((name, i) => ({ name, row: i < 7 ? 'TOP' : 'BOTTOM', column: i < 7 ? i : i - 7, type: 'CATEGORY' }));
+  const layout = getCreativeLayout();
+  const scale = creativeGuiScale;
   for (const entry of source) {
     const top = entry.row !== 'BOTTOM';
     const col = entry.column;
     const rightAligned = ['Saved Hotbars', 'Search Items', 'Operator Utilities', 'Survival Inventory'].includes(entry.name);
-    const tabX = rightAligned ? 195 - 27 * (7 - col) + 1 : 27 * col;
+    const tabX = rightAligned ? layout.width - layout.tabs.spacing * (7 - col) + 1 : layout.tabs.spacing * col;
     const tab = document.createElement('button');
     tab.type = 'button';
     tab.className = 'inventory-tab';
     tab.title = entry.name;
-    tab.style.left = `${tabX * 2}px`;
-    tab.style.top = top ? '0' : '320px';
+    tab.style.left = `${tabX * scale}px`;
+    tab.style.top = `${(top ? layout.tabs.drawTop : layout.tabs.drawBottom) * scale}px`;
+    tab.style.width = `${layout.tabs.width * scale}px`;
+    tab.style.height = `${layout.tabs.height * scale}px`;
     const suffix = `${top ? 'top' : 'bottom'}_${entry.name === creativeCategory ? 'selected' : 'unselected'}_${Math.min(7, col + 1)}`;
     tab.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/sprites/container/creative_inventory/tab_${suffix}.png')`;
-    tab.style.backgroundSize = '52px 64px';
+    tab.style.backgroundSize = `${layout.tabs.width * scale}px ${layout.tabs.height * scale}px`;
     tab.style.backgroundRepeat = 'no-repeat';
     tab.addEventListener('click', () => {
       creativeCategory = entry.name;
@@ -4144,28 +4182,131 @@ function renderCreativeTabs() {
     const iconId = entry.icon || 'stone';
     const iconType = blockProperties[iconId.replace('minecraft:', '')] ? 'block' : 'item';
     const img = document.createElement('img');
+    img.style.left = `${5 * scale}px`;
+    img.style.top = `${(top ? 9 : 7) * scale}px`;
+    img.style.width = `${16 * scale}px`;
+    img.style.height = `${16 * scale}px`;
     queueCreativeIcon(iconId.replace('minecraft:', ''), iconType, img);
     tab.appendChild(img);
     tabs.appendChild(tab);
   }
 }
 
-function updateCreativePanelBackground() {
+function getCreativeLayout() {
+  const selected = creativeTabs.find(tab => tab.name === creativeCategory);
+  return selected?.type === 'INVENTORY' ? CREATIVE_LAYOUTS.inventory : CREATIVE_LAYOUTS.creative;
+}
+
+function applyCreativeScreenLayout() {
   const panel = document.querySelector('.inventory-panel');
   if (!panel) return;
+  const layout = getCreativeLayout();
+  const scale = creativeGuiScale;
   const selected = creativeTabs.find(tab => tab.name === creativeCategory);
   const type = selected?.type;
-  const file = type === 'INVENTORY'
-    ? 'container/inventory.png'
-    : `container/creative_inventory/${type === 'SEARCH' ? 'tab_item_search.png' : 'tab_items.png'}`;
-  panel.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/${file}')`;
-  panel.style.backgroundSize = type === 'INVENTORY' ? '352px 332px' : '512px 512px';
-  const title = panel.querySelector('.inventory-head strong');
-  if (title) title.style.visibility = 'hidden';
+  const isInventory = type === 'INVENTORY';
+  const px = value => `${value * scale}px`;
+  panel.classList.toggle('inventory-mode', isInventory);
+  panel.style.setProperty('--screen-w', px(layout.width));
+  panel.style.setProperty('--screen-h', px(layout.height));
+  panel.style.setProperty('--bg-size', px(256));
+  panel.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/${isInventory ? 'container/inventory.png' : type === 'SEARCH' ? 'container/creative_inventory/tab_item_search.png' : 'container/creative_inventory/tab_items.png'}')`;
+  panel.style.backgroundSize = px(256);
+  panel.style.setProperty('--tab-w', px(layout.tabs.width));
+  panel.style.setProperty('--tab-h', px(layout.tabs.height));
+  panel.style.setProperty('--tab-icon-x', px(5));
+  panel.style.setProperty('--tab-icon-y', px(9));
+  panel.style.setProperty('--icon-size', px(16));
+  panel.style.setProperty('--icon-inset', px(1));
+
+  const canvas = document.getElementById('inventoryText');
+  if (canvas) {
+    canvas.width = Math.round(layout.width * scale);
+    canvas.height = Math.round(layout.height * scale);
+  }
+  const search = document.getElementById('inventorySearch');
+  if (search) {
+    search.style.left = px(layout.search?.x ?? 0);
+    search.style.top = px(layout.search?.y ?? 0);
+    search.style.width = px(layout.search?.w ?? 0);
+    search.style.height = px(layout.search?.h ?? 0);
+  }
+  const grid = document.getElementById('inventoryGrid');
+  if (grid && layout.grid) {
+    const g = layout.grid;
+    grid.style.setProperty('--grid-x', px(g.x));
+    grid.style.setProperty('--grid-y', px(g.y));
+    grid.style.setProperty('--grid-cols', String(g.cols));
+    grid.style.setProperty('--slot-size', px(g.slot));
+    grid.style.width = px(g.cols * g.slot);
+    grid.style.height = px(g.rows * g.slot);
+  }
+  const hotbar = document.getElementById('inventoryHotbar');
+  if (hotbar && layout.hotbar) {
+    const h = layout.hotbar;
+    hotbar.style.setProperty('--hotbar-x', px(h.x));
+    hotbar.style.setProperty('--hotbar-y', px(h.y));
+    hotbar.style.setProperty('--hotbar-cols', String(h.cols));
+    hotbar.style.setProperty('--slot-size', px(h.slot));
+    hotbar.style.width = px(h.cols * h.slot);
+    hotbar.style.height = px(h.slot);
+  }
+  const scroll = document.querySelector('.inventory-scroll');
+  if (scroll && layout.scroll) {
+    scroll.style.setProperty('--scroll-x', px(layout.scroll.x));
+    scroll.style.setProperty('--scroll-y', px(layout.scroll.y));
+    scroll.style.setProperty('--scroll-w', px(layout.scroll.w));
+    scroll.style.setProperty('--scroll-h', px(layout.scroll.h));
+    scroll.style.setProperty('--scroll-thumb', px(layout.scroll.thumb));
+  }
+  const player = document.getElementById('inventoryPlayer');
+  if (player && layout.player) {
+    player.style.left = px(layout.player.x);
+    player.style.top = px(layout.player.y);
+    player.style.width = px(layout.player.w);
+    player.style.height = px(layout.player.h);
+  }
+  renderInventorySlotLayer(scale, layout);
+}
+
+function renderInventorySlotLayer(scale, layout) {
+  const layer = document.getElementById('inventorySlotLayer');
+  if (!layer) return;
+  layer.textContent = '';
+  if (!layout.inventorySlots?.length) return;
+  const add = (x, y) => {
+    const slot = document.createElement('div');
+    slot.className = 'inventory-slot';
+    slot.style.left = `${x * scale}px`;
+    slot.style.top = `${y * scale}px`;
+    slot.style.width = `${18 * scale}px`;
+    slot.style.height = `${18 * scale}px`;
+    layer.appendChild(slot);
+  };
+  for (const group of layout.inventorySlots) {
+    if (group.cols) {
+      for (let row = 0; row < (group.rows || 1); row++) {
+        for (let col = 0; col < group.cols; col++) add(group.x + col * 18, group.y + row * 18);
+      }
+    } else if (group.rows) {
+      for (let row = 0; row < group.rows; row++) add(group.x, group.y + row * 18);
+    } else {
+      add(group.x, group.y);
+    }
+  }
+}
+
+function updateCreativePanelBackground() {
+  const selected = creativeTabs.find(tab => tab.name === creativeCategory);
+  const type = selected?.type;
+  applyCreativeScreenLayout();
   const search = document.getElementById('inventorySearch');
   if (search) search.style.display = type === 'SEARCH' ? 'block' : 'none';
-  panel.classList.toggle('inventory-mode', type === 'INVENTORY');
-  if (type === 'INVENTORY') renderInventoryPlayer();
+  if (type === 'INVENTORY') {
+    const player = document.getElementById('inventoryPlayer');
+    if (player) player.dataset.ready = '0';
+    renderInventoryPlayer();
+  }
   renderInventoryText();
 }
 
@@ -4212,14 +4353,16 @@ function renderInventoryText() {
   ctx.imageSmoothingEnabled = false;
   const selected = creativeTabs.find(tab => tab.name === creativeCategory);
   const type = selected?.type;
+  const layout = getCreativeLayout();
+  const s = creativeGuiScale;
   if (type !== 'INVENTORY') {
     const label = selected?.name || 'Building Blocks';
-    drawMinecraftText(ctx, label, 16, 12, 2, '#404040');
+    drawMinecraftText(ctx, label, layout.title.x * s, layout.title.y * s, s, '#404040');
   }
   if (type === 'SEARCH') {
     const search = document.getElementById('inventorySearch');
     const text = search?.value || '';
-    if (text) drawMinecraftText(ctx, text, 168, 14, 2, '#ffffff');
+    if (text) drawMinecraftText(ctx, text, (layout.search.x + 2) * s, (layout.search.y + 1) * s, s, '#ffffff');
   }
 }
 
@@ -4349,10 +4492,13 @@ function closeCreativeInventory() {
 
 function setCreativeGuiScale(scale, persist = false) {
   creativeGuiScale = Math.max(0.75, Math.min(4, Number(scale) || 1.5));
-  const panel = document.querySelector('.inventory-panel');
-  if (panel) panel.style.zoom = String(creativeGuiScale / 2);
   if (persist) {
     try { localStorage.setItem('viewerCreativeGuiScale', String(creativeGuiScale)); } catch {}
+  }
+  if (creativeInventoryOpen) {
+    applyCreativeScreenLayout();
+    renderCreativeTabs();
+    renderCreativeInventory();
   }
 }
 
