@@ -419,6 +419,7 @@ let blockProperties = {};
 let blockPropertiesReady = false;
 let blockEntityModels = {};
 const physicsBlocks = new Map();
+const physicsStates = new Map();
 
 const magentaTex = new THREE.DataTexture(new Uint8Array([255,0,255,255]), 1, 1, THREE.RGBAFormat);
 magentaTex.needsUpdate = true;
@@ -1733,6 +1734,10 @@ function blockIdAtWorld(x, y, z) {
   return physicsBlocks.get(`${Math.floor(x - 0.5)},${Math.floor(y - 0.5)},${Math.floor(z - 0.5)}`);
 }
 
+function blockStateAtWorld(x, y, z) {
+  return physicsStates.get(`${Math.floor(x - 0.5)},${Math.floor(y - 0.5)},${Math.floor(z - 0.5)}`);
+}
+
 function blockPhysics(id) {
   return id ? blockProperties[id.replace('minecraft:', '')] : null;
 }
@@ -2447,6 +2452,7 @@ function clearWorld() {
   collisionSolids.clear();
   collisionPartials.clear();
   physicsBlocks.clear();
+  physicsStates.clear();
   worldBounds = null;
 }
 
@@ -2636,6 +2642,7 @@ async function build() {
     const modelEntries = await getBlockModels(id, props, pos);
     blockInfo.set(key, { id, pos, entries: modelEntries, properties: props });
     physicsBlocks.set(key, id);
+    physicsStates.set(key, props);
     if (isFluidBlock(id)) fluidPositions.add(key);
     if (!SHADER_BLOCK_IDS.has(id) && !isTranslucentBlock(id) && !isCutoutBlock(id) && entriesAreOpaqueCube(modelEntries)) {
       opaquePositions.add(key);
@@ -3012,13 +3019,18 @@ function physicsTick() {
   ];
   const bodyPropsList = bodyIds.map(blockPhysics).filter(Boolean);
   const bodyProps = bodyPropsList[0] || null;
+  const waterloggedBody = [
+    blockStateAtWorld(player.pos.x, player.pos.y + 0.1, player.pos.z),
+    blockStateAtWorld(player.pos.x, player.pos.y + 0.9, player.pos.z),
+    blockStateAtWorld(player.pos.x, player.pos.y + 1.4, player.pos.z),
+  ].some(state => state?.waterlogged === 'true');
   const WATER_PLANT_CLASSES = new Set([
     'KelpBlock', 'KelpPlantBlock', 'SeagrassBlock', 'TallSeagrassBlock',
     'BaseCoralPlantBlock', 'BaseCoralFanBlock', 'BaseCoralWallFanBlock',
     'CoralPlantBlock', 'CoralFanBlock', 'CoralWallFanBlock',
   ]);
   const inWeb = bodyPropsList.some(p => p.class === 'WebBlock');
-  const inWater = bodyIds.some(id => id === 'water')
+  const inWater = waterloggedBody || bodyIds.some(id => id === 'water')
     || bodyPropsList.some(p => (p.class === 'LiquidBlock' && p.light !== 15) || WATER_PLANT_CLASSES.has(p.class));
   const inLava = bodyIds.some(id => id === 'lava') || bodyPropsList.some(p => p.class === 'LiquidBlock' && p.light === 15);
   const inPowder = bodyPropsList.some(p => p.class === 'PowderSnowBlock');
