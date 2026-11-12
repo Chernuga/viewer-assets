@@ -2319,6 +2319,7 @@ function collectBlockEntityGeometry(info) {
   const { id, pos, properties } = info;
   const model = blockEntityModels[id.replace('minecraft:', '')];
   if (!model) return false;
+  if (id === 'lectern' && properties?.has_book !== 'true') return false;
   const yawByFacing = { north: Math.PI, east: -Math.PI / 2, south: 0, west: Math.PI / 2 };
   let yaw = yawByFacing[properties?.facing] || 0;
   if (properties?.rotation !== undefined) yaw += (Number(properties.rotation) / 16) * Math.PI * 2;
