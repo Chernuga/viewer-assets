@@ -2250,6 +2250,24 @@ function entriesAreOpaqueCube(entries) {
   return true;
 }
 
+const BANNER_PATTERN_COLORS = {
+  white: '#ffffff', orange: '#f9801d', magenta: '#c74ebd', light_blue: '#3ab3da',
+  yellow: '#fed83d', lime: '#80c71f', pink: '#f38baa', gray: '#474f52',
+  light_gray: '#9d9d97', cyan: '#169c9c', purple: '#8932b8', blue: '#3c44aa',
+  brown: '#835432', green: '#5e7c16', red: '#b02e26', black: '#1d1d21',
+};
+
+function bannerPatternsFromNbt(nbt) {
+  if (!nbt) return [];
+  const out = [];
+  for (const body of nbt.match(/\{([^{}]*)\}/g) || []) {
+    const pattern = body.match(/pattern\s*:\s*"([^"]+)"/i)?.[1];
+    const color = body.match(/color\s*:\s*"([^"]+)"/i)?.[1];
+    if (pattern) out.push({ pattern: pattern.toLowerCase(), color: (color || 'white').toLowerCase() });
+  }
+  return out;
+}
+
 function collectBlockEntityGeometry(info) {
   const { id, pos, properties } = info;
   const model = blockEntityModels[id.replace('minecraft:', '')];
@@ -2277,6 +2295,35 @@ function collectBlockEntityGeometry(info) {
     const nz = n[0] * sin + n[2] * cos;
     const uvs = (quad.uvs || []).map(([u, v]) => [u, model.flipV === false ? v : 1 - v]);
     pushQuad(bucket, corners[0], corners[1], corners[2], corners[3], new THREE.Vector3(nx, n[1], nz), uvs, `${pos.x},${pos.y},${pos.z}`);
+  }
+
+  const patterns = id.includes('banner') ? bannerPatternsFromNbt(info.nbt) : [];
+  if (patterns.length && model.quads) {
+    const flagQuads = model.quads.filter(q => {
+      const ys = q.positions.map(p => p[1]);
+      return Math.abs(q.normal?.[2] || 0) > 0.9 && Math.max(...ys) - Math.min(...ys) > 12;
+    });
+    patterns.forEach((entry, layer) => {
+      let material = getBlockMaterial(`entity/banner/${entry.pattern}`, undefined, false, false);
+      material = material.clone();
+      material.color.set(BANNER_PATTERN_COLORS[entry.color] || '#ffffff');
+      material.side = THREE.DoubleSide;
+      const bucket = getBucket(material);
+      for (const quad of flagQuads) {
+        const zOffset = (quad.normal[2] > 0 ? 1 : -1) * 0.08 * (layer + 1);
+        const corners = quad.positions.map(([x, y, z]) => {
+          let rx = x / 16 - 0.5, rz = (z + zOffset) / 16 - 0.5;
+          const tx = rx * cos - rz * sin;
+          const tz = rx * sin + rz * cos;
+          return new THREE.Vector3(pos.x + 0.5 + tx, pos.y + 0.5 + y / 16, pos.z + 0.5 + tz);
+        });
+        const n = quad.normal;
+        const nx = n[0] * cos - n[2] * sin;
+        const nz = n[0] * sin + n[2] * cos;
+        const uvs = [[0, 0], [1, 0], [1, 1], [0, 1]];
+        pushQuad(bucket, corners[0], corners[1], corners[2], corners[3], new THREE.Vector3(nx, n[1], nz), uvs, `${pos.x},${pos.y},${pos.z}`);
+      }
+    });
   }
   return true;
 }
@@ -2572,14 +2619,18 @@ function saveCommandsToStorage() {
   localStorage.setItem('voxelBuilderCommandsJava', document.getElementById('commands').value);
 }
 function parseBlockSpec(spec) {
-  let id = spec, props = {};
+  let id = spec, props = {}, nbt = null;
+  const brace = spec.indexOf('{');
+  if (brace !== -1) { nbt = spec.substring(brace); spec = spec.substring(0, brace); }
   const bracket = spec.indexOf('[');
   if (bracket !== -1) {
     id = spec.substring(0, bracket);
     const propStr = spec.substring(bracket + 1, spec.length - 1);
     for (const pair of propStr.split(',')) { const [k, v] = pair.split('='); if (k && v) props[k.trim()] = v.trim(); }
+  } else {
+    id = spec;
   }
-  return [id, props];
+  return [id, props, nbt];
 }
 
 function growWorldBounds(x, y, z) {
@@ -2636,11 +2687,11 @@ async function build() {
   const fluidPositions = new Set();
 
   const { errors: resolveErrors } = await mapWithConcurrency(entries, concurrency, async ([key, spec]) => {
-    const [id, props] = parseBlockSpec(spec);
+    const [id, props, nbt] = parseBlockSpec(spec);
     const [xStr, yStr, zStr] = key.split(',');
     const pos = { x: parseInt(xStr, 10), y: parseInt(yStr, 10), z: parseInt(zStr, 10) };
     const modelEntries = await getBlockModels(id, props, pos);
-    blockInfo.set(key, { id, pos, entries: modelEntries, properties: props });
+    blockInfo.set(key, { id, pos, entries: modelEntries, properties: props, nbt });
     physicsBlocks.set(key, id);
     physicsStates.set(key, props);
     if (isFluidBlock(id)) fluidPositions.add(key);
