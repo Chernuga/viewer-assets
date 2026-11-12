@@ -2800,6 +2800,7 @@ function growWorldBounds(x, y, z) {
 }
 
 async function build() {
+  window.__viewerReady = false;
   clearWorld();
   errorOverlay.textContent = ''; errorOverlay.style.display = 'none';
   await loadColormaps();
@@ -2874,6 +2875,7 @@ async function build() {
   unstuckPlayer();
   const t3 = performance.now();
   console.log(`Build complete: ${placementMap.size} blocks in ${(t3 - t0).toFixed(0)} ms total`);
+  window.__viewerReady = true;
 }
 
 /* ============================= CREATIVE PLAYER ============================= */
