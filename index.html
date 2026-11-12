@@ -62,19 +62,26 @@
     .creative-add { font:700 20px/1 var(--mono); color:#3f3f3f; }
     .inventory-overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.55); z-index:60; }
     .inventory-overlay.open { display:flex; }
-    .inventory-panel { width:min(760px,94vw); height:min(620px,86vh); display:flex; flex-direction:column; gap:8px; padding:12px; border-radius:0; background:#c6c6c6; border:4px solid #373737; box-shadow:inset 3px 3px 0 #ffffff, inset -3px -3px 0 #555555, 0 24px 70px rgba(0,0,0,0.65); color:#3f3f3f; image-rendering:pixelated; }
-    .inventory-head { display:flex; align-items:center; gap:8px; }
-    .inventory-head strong { color:#3f3f3f; font-size:15px; flex:0 0 auto; text-shadow:1px 1px 0 #ffffff; }
-    #inventorySearch { flex:1; min-width:0; padding:8px; border-radius:0; border:2px solid #a0a0a0; background:#ffffff; color:#1f1f1f; outline:none; font:13px var(--mono); box-shadow:inset 1px 1px 0 #555555; }
-    #inventoryClose { width:30px; height:30px; border-radius:0; border:2px solid #373737; background:#8b8b8b; color:#3f3f3f; cursor:pointer; font-size:18px; box-shadow:inset 1px 1px 0 #ffffff; }
-    .inventory-tabs { display:flex; gap:2px; overflow-x:auto; padding-bottom:2px; }
-    .inventory-tab { flex:0 0 auto; padding:5px 8px; border:2px solid #373737; border-bottom:0; background:#8b8b8b; color:#3f3f3f; font:10px/1 var(--mono); cursor:pointer; box-shadow:inset 1px 1px 0 #ffffff; }
-    .inventory-tab.active { background:#c6c6c6; color:#1f1f1f; }
-    .inventory-grid { flex:1; overflow:auto; display:grid; grid-template-columns:repeat(9, 42px); grid-auto-rows:42px; gap:2px; justify-content:center; align-content:start; padding:4px; background:#8b8b8b; border:2px solid #373737; box-shadow:inset 2px 2px 0 #555555; }
-    .inventory-item { min-height:42px; padding:1px; border-radius:0; border:2px solid #8b8b8b; background:#8b8b8b; color:#3f3f3f; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; font:8px/1 var(--mono); overflow:hidden; box-shadow:inset 1px 1px 0 #373737; }
-    .inventory-item:hover { border-color:#ffffff; background:#c6c6c6; }
-    .inventory-item img { width:30px; height:30px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .inventory-panel { position:relative; width:390px; height:272px; padding:0; border-radius:0; background-image:url('minecraft/textures/gui/container/creative_inventory/tab_items.png'); background-size:512px 512px; background-repeat:no-repeat; image-rendering:pixelated; box-shadow:0 24px 70px rgba(0,0,0,0.65); color:#3f3f3f; }
+    .inventory-head { position:absolute; left:16px; top:8px; right:36px; display:flex; align-items:center; gap:8px; z-index:3; }
+    .inventory-head strong { color:#3f3f3f; font:12px var(--mono); text-shadow:1px 1px 0 #ffffff; }
+    #inventorySearch { position:absolute; left:164px; top:10px; width:160px; height:20px; padding:2px 4px; border:0; background:#ffffff; color:#1f1f1f; outline:none; font:12px var(--mono); box-shadow:inset 1px 1px 0 #555555; }
+    #inventoryClose { position:absolute; right:4px; top:4px; width:22px; height:22px; border:2px solid #373737; background:#8b8b8b; color:#3f3f3f; cursor:pointer; font-size:14px; line-height:16px; z-index:4; }
+    .inventory-tabs { position:absolute; left:0; top:-56px; width:390px; height:64px; overflow:visible; z-index:2; }
+    .inventory-tab { position:absolute; width:52px; height:64px; padding:0; border:0; background:transparent; cursor:pointer; color:transparent; font-size:0; }
+    .inventory-tab img { position:absolute; left:10px; top:18px; width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .inventory-grid { position:absolute; left:18px; top:36px; width:324px; height:180px; display:grid; grid-template-columns:repeat(9, 36px); grid-auto-rows:36px; gap:0; overflow:hidden; background:none; border:0; box-shadow:none; padding:0; }
+    .inventory-item { width:36px; min-height:36px; padding:0; border:0; background:transparent; color:transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; overflow:hidden; box-shadow:none; }
+    .inventory-item:hover { background:rgba(255,255,255,0.55); }
+    .inventory-item img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
     .inventory-item span { display:none; }
+    .inventory-hotbar { position:absolute; left:18px; top:224px; width:324px; height:36px; display:grid; grid-template-columns:repeat(9,36px); gap:0; z-index:2; }
+    .inventory-hotbar .creative-slot { width:36px; height:36px; border:0; background:transparent; box-shadow:none; }
+    .inventory-hotbar .creative-slot.selected { border:2px solid #ffffff; box-shadow:inset 0 0 0 1px #373737; }
+    .inventory-hotbar .creative-slot .slot-num { display:none; }
+    .inventory-scroll { position:absolute; left:350px; top:36px; width:24px; height:224px; z-index:2; }
+    .inventory-scroll-knob { width:24px; height:30px; background-image:url('minecraft/textures/gui/sprites/container/creative_inventory/scroller.png'); background-size:24px 30px; image-rendering:pixelated; cursor:ns-resize; }
+    body.inventory-open .creative-bar { display:none; }
     body.touch .creative-bar { bottom:8px; }
   </style>
 </head>
@@ -128,6 +135,8 @@
         </div>
         <div id="inventoryTabs" class="inventory-tabs"></div>
         <div id="inventoryGrid" class="inventory-grid"></div>
+        <div id="inventoryHotbar" class="inventory-hotbar"></div>
+        <div class="inventory-scroll"><div id="inventoryScrollKnob" class="inventory-scroll-knob"></div></div>
       </div>
     </div>
     <div id="mobileControls" class="mobile-controls" aria-hidden="true">
@@ -3569,6 +3578,7 @@ const CREATIVE_CATEGORIES = [
 ];
 let creativeItems = [];
 let creativeCategory = 'Building Blocks';
+let creativePage = 0;
 let creativeHotbar = CREATIVE_HOTBAR_DEFAULT.slice();
 let creativeSlot = 0;
 let creativeSelectedItem = creativeHotbar[0];
@@ -3673,20 +3683,57 @@ function renderCreativeTabs() {
   const tabs = document.getElementById('inventoryTabs');
   if (!tabs) return;
   tabs.textContent = '';
-  for (const category of CREATIVE_CATEGORIES) {
+  CREATIVE_CATEGORIES.forEach((category, index) => {
+    const top = index < 7;
+    const col = top ? index : index - 7;
     const tab = document.createElement('button');
     tab.type = 'button';
-    tab.className = 'inventory-tab' + (category === creativeCategory ? ' active' : '');
-    tab.textContent = category;
+    tab.className = 'inventory-tab';
+    tab.title = category;
+    tab.style.left = `${27 * col * 2}px`;
+    tab.style.top = top ? '0' : '320px';
+    const suffix = `${top ? 'top' : 'bottom'}_${category === creativeCategory ? 'selected' : 'unselected'}_${Math.min(7, col + 1)}`;
+    tab.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/sprites/container/creative_inventory/tab_${suffix}.png')`;
+    tab.style.backgroundSize = '52px 64px';
+    tab.style.backgroundRepeat = 'no-repeat';
     tab.addEventListener('click', () => {
       creativeCategory = category;
+      creativePage = 0;
       const search = document.getElementById('inventorySearch');
       if (search) search.value = '';
       renderCreativeTabs();
       renderCreativeInventory();
     });
+    const iconEntry = creativeItems.find(entry => entry.cat === category) ||
+      { id: category === 'Building Blocks' ? 'bricks' : 'stone', type: 'block' };
+    const img = document.createElement('img');
+    queueCreativeIcon(iconEntry.id, iconEntry.type, img);
+    tab.appendChild(img);
     tabs.appendChild(tab);
-  }
+  });
+}
+
+function renderInventoryHotbar() {
+  const bar = document.getElementById('inventoryHotbar');
+  if (!bar) return;
+  bar.textContent = '';
+  creativeHotbar.forEach((item, index) => {
+    const slot = document.createElement('button');
+    slot.type = 'button';
+    slot.className = 'creative-slot' + (index === creativeSlot ? ' selected' : '');
+    slot.title = `${index + 1}: ${creativeLabel(item.id)}`;
+    const img = document.createElement('img');
+    img.alt = '';
+    queueCreativeIcon(item.id, item.type, img);
+    slot.appendChild(img);
+    slot.addEventListener('click', () => {
+      creativeSlot = index;
+      creativeSelectedItem = item;
+      renderInventoryHotbar();
+      renderCreativeHotbar();
+    });
+    bar.appendChild(slot);
+  });
 }
 
 function renderCreativeInventory(filter = '') {
@@ -3699,33 +3746,39 @@ function renderCreativeInventory(filter = '') {
   const rows = source
     .filter(item => !query ? item.cat === creativeCategory : item.id.includes(query))
     .sort((a, b) => a.id.localeCompare(b.id));
+  const perPage = 45;
+  const maxPage = Math.max(0, Math.ceil(rows.length / perPage) - 1);
+  creativePage = Math.max(0, Math.min(creativePage, maxPage));
+  const pageRows = rows.slice(creativePage * perPage, creativePage * perPage + perPage);
+
   grid.textContent = '';
-  if (!rows.length) {
-    const empty = document.createElement('div');
-    empty.className = 'inventory-item';
-    empty.textContent = creativeItems.length ? 'No items' : 'Loading items…';
-    grid.appendChild(empty);
-    return;
-  }
-  for (const entry of rows) {
+  for (let i = 0; i < perPage; i++) {
+    const entry = pageRows[i];
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'inventory-item';
+    if (!entry) { item.style.visibility = 'hidden'; grid.appendChild(item); continue; }
     item.title = entry.id;
     const img = document.createElement('img');
-    img.alt = ''; img.loading = 'lazy';
+    img.alt = '';
     queueCreativeIcon(entry.id, entry.type, img);
-    const label = document.createElement('span');
-    label.textContent = creativeLabel(entry.id);
-    item.append(img, label);
+    item.appendChild(img);
     item.addEventListener('click', () => {
       const value = { id: entry.id, type: entry.type };
       creativeHotbar[creativeSlot] = value;
       creativeSelectedItem = value;
+      renderInventoryHotbar();
       renderCreativeHotbar();
-      closeCreativeInventory();
     });
     grid.appendChild(item);
+  }
+
+  const knob = document.getElementById('inventoryScrollKnob');
+  if (knob) {
+    const track = Math.max(0, 224 - 30);
+    const offset = maxPage ? (creativePage / maxPage) * track : 0;
+    knob.style.transform = `translateY(${offset}px)`;
+    knob.style.visibility = maxPage ? 'visible' : 'hidden';
   }
 }
 
@@ -3733,17 +3786,21 @@ function openCreativeInventory() {
   creativeInventoryOpen = true;
   const overlay = document.getElementById('inventoryOverlay');
   if (!overlay) return;
+  document.body.classList.add('inventory-open');
   overlay.classList.add('open');
   overlay.setAttribute('aria-hidden', 'false');
   document.exitPointerLock?.();
   const search = document.getElementById('inventorySearch');
   if (search) { search.value = ''; setTimeout(() => search.focus(), 0); }
+  creativePage = 0;
   renderCreativeTabs();
   renderCreativeInventory();
+  renderInventoryHotbar();
 }
 
 function closeCreativeInventory() {
   creativeInventoryOpen = false;
+  document.body.classList.remove('inventory-open');
   const overlay = document.getElementById('inventoryOverlay');
   if (overlay) {
     overlay.classList.remove('open');
@@ -3753,13 +3810,24 @@ function closeCreativeInventory() {
 
 function initCreativeUI() {
   renderCreativeHotbar();
+  renderInventoryHotbar();
   renderCreativeTabs();
+  const panel = document.querySelector('.inventory-panel');
+  if (panel) panel.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/container/creative_inventory/tab_items.png')`;
+  const knob = document.getElementById('inventoryScrollKnob');
+  if (knob) knob.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/sprites/container/creative_inventory/scroller.png')`;
   const close = document.getElementById('inventoryClose');
   if (close) close.addEventListener('click', closeCreativeInventory);
   const overlay = document.getElementById('inventoryOverlay');
   if (overlay) overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) closeCreativeInventory(); });
+  if (overlay) overlay.addEventListener('wheel', (e) => {
+    if (!creativeInventoryOpen) return;
+    e.preventDefault();
+    creativePage += e.deltaY > 0 ? 1 : -1;
+    renderCreativeInventory(document.getElementById('inventorySearch')?.value || '');
+  }, { passive: false });
   const search = document.getElementById('inventorySearch');
-  if (search) search.addEventListener('input', () => renderCreativeInventory(search.value));
+  if (search) search.addEventListener('input', () => { creativePage = 0; renderCreativeInventory(search.value); });
 }
 
 function updateHud() {
