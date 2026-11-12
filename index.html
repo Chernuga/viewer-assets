@@ -54,19 +54,20 @@
     }
     body.play #webgl-canvas { cursor:crosshair; }
     .error-overlay { position:absolute; top:10px; right:10px; max-width:400px; max-height:300px; overflow:auto; background:rgba(255,0,0,0.1); border:1px solid rgba(255,0,0,0.3); border-radius:8px; padding:8px; font-size:12px; color:#ff9999; display:none; z-index:20; white-space:pre-wrap; word-break:break-all; }
-    .creative-bar { position:absolute; left:50%; bottom:14px; transform:translateX(-50%); display:flex; gap:3px; padding:4px; border-radius:3px; background:#c6c6c6; border:2px solid #373737; box-shadow:inset 2px 2px 0 #ffffff, inset -2px -2px 0 #555555, 0 8px 30px rgba(0,0,0,0.45); z-index:14; pointer-events:auto; }
-    .creative-slot, .creative-add { width:40px; height:40px; padding:0; border-radius:0; border:2px solid #8b8b8b; background:#8b8b8b; color:#3f3f3f; cursor:pointer; position:relative; overflow:hidden; box-shadow:inset 1px 1px 0 #373737, inset -1px -1px 0 #ffffff; }
-    .creative-slot img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
-    .creative-slot.selected { border-color:#ffffff; box-shadow:inset 0 0 0 2px #ffffff, inset 2px 2px 0 #373737; }
-    .creative-slot .slot-num { position:absolute; left:2px; top:0; font:10px/1 var(--mono); color:#373737; }
-    .creative-add { font:700 20px/1 var(--mono); color:#3f3f3f; }
+    .creative-bar { position:absolute; left:50%; bottom:0; transform:translateX(-50%); width:364px; height:44px; padding:0; border:0; background-image:url('minecraft/textures/gui/sprites/hud/hotbar.png'); background-size:364px 44px; background-repeat:no-repeat; image-rendering:pixelated; z-index:14; pointer-events:none; }
+    .creative-slot { position:absolute; width:40px; height:40px; padding:0; border:0; background:transparent; cursor:pointer; overflow:visible; pointer-events:auto; }
+    .creative-slot img { position:absolute; left:4px; top:4px; width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .creative-slot.selected { background:transparent; z-index:4; }
+    .creative-slot .slot-num { display:none; }
+    .hotbar-selection { position:absolute; left:0; top:-2px; width:48px; height:46px; background-image:url('minecraft/textures/gui/sprites/hud/hotbar_selection.png'); background-size:48px 46px; background-repeat:no-repeat; image-rendering:pixelated; pointer-events:none; z-index:3; }
     .inventory-overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.55); z-index:60; }
     .inventory-overlay.open { display:flex; }
     .inventory-panel { position:relative; width:390px; height:272px; padding:0; border-radius:0; background-image:url('minecraft/textures/gui/container/creative_inventory/tab_items.png'); background-size:512px 512px; background-repeat:no-repeat; image-rendering:pixelated; box-shadow:0 24px 70px rgba(0,0,0,0.65); color:#3f3f3f; }
     .inventory-head { position:absolute; left:16px; top:8px; right:36px; display:flex; align-items:center; gap:8px; z-index:3; }
     .inventory-head strong { color:#3f3f3f; font:12px var(--mono); text-shadow:1px 1px 0 #ffffff; }
-    #inventorySearch { position:absolute; left:164px; top:10px; width:160px; height:20px; padding:2px 4px; border:0; background:#ffffff; color:#1f1f1f; outline:none; font:12px var(--mono); box-shadow:inset 1px 1px 0 #555555; }
-    #inventoryClose { position:absolute; right:4px; top:4px; width:22px; height:22px; border:2px solid #373737; background:#8b8b8b; color:#3f3f3f; cursor:pointer; font-size:14px; line-height:16px; z-index:4; }
+    #inventorySearch { position:absolute; left:164px; top:10px; width:160px; height:20px; padding:2px 4px; border:0; background:transparent; color:transparent; caret-color:#ffffff; outline:none; font:12px var(--mono); box-shadow:none; z-index:3; }
+    #inventoryClose { display:none; }
+    .inventory-text { position:absolute; left:0; top:0; width:390px; height:272px; pointer-events:none; image-rendering:pixelated; z-index:2; }
     .inventory-tabs { position:absolute; left:0; top:-56px; width:390px; height:64px; overflow:visible; z-index:2; }
     .inventory-tab { position:absolute; width:52px; height:64px; padding:0; border:0; background:transparent; cursor:pointer; color:transparent; font-size:0; }
     .inventory-tab img { position:absolute; left:10px; top:18px; width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
@@ -76,8 +77,9 @@
     .inventory-item img { width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
     .inventory-item span { display:none; }
     .inventory-hotbar { position:absolute; left:18px; top:224px; width:324px; height:36px; display:grid; grid-template-columns:repeat(9,36px); gap:0; z-index:2; }
-    .inventory-hotbar .creative-slot { width:36px; height:36px; border:0; background:transparent; box-shadow:none; }
-    .inventory-hotbar .creative-slot.selected { border:2px solid #ffffff; box-shadow:inset 0 0 0 1px #373737; }
+    .inventory-hotbar .creative-slot { position:relative; left:auto; top:auto; width:36px; height:36px; border:0; background:transparent; box-shadow:none; }
+    .inventory-hotbar .creative-slot img { left:2px; top:2px; width:32px; height:32px; }
+    .inventory-hotbar .creative-slot.selected { border:0; box-shadow:none; }
     .inventory-hotbar .creative-slot .slot-num { display:none; }
     .inventory-scroll { position:absolute; left:350px; top:36px; width:24px; height:224px; z-index:2; }
     .inventory-scroll-knob { width:24px; height:30px; background-image:url('minecraft/textures/gui/sprites/container/creative_inventory/scroller.png'); background-size:24px 30px; image-rendering:pixelated; cursor:ns-resize; }
@@ -134,6 +136,7 @@
           <button id="inventoryClose" type="button" aria-label="Close inventory">×</button>
         </div>
         <div id="inventoryTabs" class="inventory-tabs"></div>
+        <canvas id="inventoryText" class="inventory-text" width="390" height="272"></canvas>
         <div id="inventoryGrid" class="inventory-grid"></div>
         <div id="inventoryHotbar" class="inventory-hotbar"></div>
         <div class="inventory-scroll"><div id="inventoryScrollKnob" class="inventory-scroll-knob"></div></div>
@@ -3655,31 +3658,33 @@ function renderCreativeHotbar() {
   const bar = document.getElementById('creativeBar');
   if (!bar) return;
   bar.textContent = '';
+  bar.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/sprites/hud/hotbar.png')`;
   creativeHotbar.forEach((item, index) => {
     const slot = document.createElement('button');
     slot.type = 'button';
     slot.className = 'creative-slot' + (index === creativeSlot ? ' selected' : '');
     slot.title = `${index + 1}: ${creativeLabel(item.id)}`;
-    const num = document.createElement('span');
-    num.className = 'slot-num'; num.textContent = String(index + 1);
+    slot.style.left = `${index * 40}px`;
+    slot.style.top = '2px';
+    if (index === creativeSlot) {
+      const sel = document.createElement('div');
+      sel.className = 'hotbar-selection';
+      sel.style.left = '-4px';
+      sel.style.top = '-4px';
+      slot.appendChild(sel);
+    }
     const img = document.createElement('img');
     img.alt = '';
     queueCreativeIcon(item.id, item.type, img);
-    slot.append(num, img);
+    slot.appendChild(img);
     slot.addEventListener('click', () => {
       creativeSlot = index;
       creativeSelectedItem = item;
       renderCreativeHotbar();
+      renderInventoryHotbar();
     });
     bar.appendChild(slot);
   });
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.className = 'creative-add';
-  add.title = 'Open creative inventory (E)';
-  add.textContent = '+';
-  add.addEventListener('click', openCreativeInventory);
-  bar.appendChild(add);
 }
 
 function renderCreativeTabs() {
@@ -3845,6 +3850,14 @@ function initCreativeUI() {
     creativePage += e.deltaY > 0 ? 1 : -1;
     renderCreativeInventory(document.getElementById('inventorySearch')?.value || '');
   }, { passive: false });
+  document.addEventListener('wheel', (e) => {
+    if (creativeInventoryOpen || cameraMode !== 'creative' || !pointerLocked) return;
+    e.preventDefault();
+    creativeSlot = (creativeSlot + (e.deltaY > 0 ? 1 : -1) + creativeHotbar.length) % creativeHotbar.length;
+    creativeSelectedItem = creativeHotbar[creativeSlot];
+    renderCreativeHotbar();
+    renderInventoryHotbar();
+  }, { passive: false });
   const search = document.getElementById('inventorySearch');
   if (search) search.addEventListener('input', () => { creativePage = 0; renderCreativeInventory(search.value); });
 }
@@ -3926,6 +3939,7 @@ window.addEventListener('keydown', (e) => {
       creativeSlot = index;
       creativeSelectedItem = creativeHotbar[index];
       renderCreativeHotbar();
+      renderInventoryHotbar();
     }
     return;
   }
