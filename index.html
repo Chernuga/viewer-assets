@@ -418,6 +418,7 @@ const blockMaterialCache = new Map();
 let blockProperties = {};
 let blockPropertiesReady = false;
 let blockEntityModels = {};
+let blockCollisionShapes = {};
 const physicsBlocks = new Map();
 const physicsStates = new Map();
 
@@ -1723,6 +1724,8 @@ async function loadBlockProperties() {
     if (res.ok) blockProperties = await res.json();
     const beRes = await fetch(new URL('viewer/block_entity_models.json', location.href));
     if (beRes.ok) blockEntityModels = await beRes.json();
+    const collisionRes = await fetch(new URL('viewer/block_collision_shapes.json', location.href));
+    if (collisionRes.ok) blockCollisionShapes = await collisionRes.json();
     blockPropertiesReady = true;
   } catch (err) {
     console.warn('Block properties load failed', err);
@@ -2077,6 +2080,14 @@ function getEntryCollisionShape(entry) {
 
 function getBlockCollisionShape(id, entries) {
   const clean = id.replace('minecraft:', '');
+  const actual = blockCollisionShapes[clean];
+  if (Array.isArray(actual) && blockProperties[clean]?.blockEntity) {
+    if (!actual.length) return null;
+    const full = actual.length === 1 &&
+      actual[0][0] === 0 && actual[0][1] === 0 && actual[0][2] === 0 &&
+      actual[0][3] === 1 && actual[0][4] === 1 && actual[0][5] === 1;
+    return { full, boxes: full ? [] : actual };
+  }
   if (FORCE_SOLID_BLOCKS.has(clean)) return { full: true, boxes: [] };
   if (isNonSolidBlock(clean)) return null;
 
