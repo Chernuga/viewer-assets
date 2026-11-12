@@ -419,6 +419,7 @@ let blockProperties = {};
 let blockPropertiesReady = false;
 let blockEntityModels = {};
 let blockCollisionShapes = {};
+let blockCollisionStates = {};
 const physicsBlocks = new Map();
 const physicsStates = new Map();
 
@@ -1667,6 +1668,22 @@ function getDefaultProperties(stateData, blockId) {
   return d;
 }
 
+function formatBlockStateKey(id, props) {
+  const clean = id.replace('minecraft:', '');
+  const names = Object.keys(props)
+    .filter(k => k !== 'waterlogged')
+    .sort();
+  if (!names.length) return `minecraft:${clean}`;
+  return `minecraft:${clean}[${names.map(k => `${k}=${props[k]}`).join(',')}]`;
+}
+
+async function blockStateKey(id, properties) {
+  const clean = id.replace('minecraft:', '');
+  const stateData = await loadBlockstate(clean);
+  const defaults = getDefaultProperties(stateData, clean);
+  return formatBlockStateKey(clean, { ...defaults, ...properties });
+}
+
 function resolveTexture(ref, textures) {
   const valueOf = (value) => {
     while (value && typeof value === 'object') value = value.sprite ?? value.texture ?? null;
@@ -1726,6 +1743,8 @@ async function loadBlockProperties() {
     if (beRes.ok) blockEntityModels = await beRes.json();
     const collisionRes = await fetch(new URL('viewer/block_collision_shapes.json', location.href));
     if (collisionRes.ok) blockCollisionShapes = await collisionRes.json();
+    const statesRes = await fetch(new URL('viewer/block_collision_states.json', location.href));
+    if (statesRes.ok) blockCollisionStates = await statesRes.json();
     blockPropertiesReady = true;
   } catch (err) {
     console.warn('Block properties load failed', err);
@@ -2102,8 +2121,19 @@ function getBlockCollisionShape(id, entries) {
 }
 
 function registerBlockCollision(info) {
-  const { id, pos, entries } = info;
+  const { id, pos, entries, stateKey } = info;
   if (!entries || entries.length === 0) return;
+  const stateBoxes = stateKey ? blockCollisionStates[stateKey] : null;
+  if (Array.isArray(stateBoxes)) {
+    if (!stateBoxes.length) return;
+    const key = `${pos.x},${pos.y},${pos.z}`;
+    const full = stateBoxes.length === 1 &&
+      stateBoxes[0][0] === 0 && stateBoxes[0][1] === 0 && stateBoxes[0][2] === 0 &&
+      stateBoxes[0][3] === 1 && stateBoxes[0][4] === 1 && stateBoxes[0][5] === 1;
+    if (full) collisionSolids.add(key);
+    else collisionPartials.set(key, stateBoxes);
+    return;
+  }
   const shape = getBlockCollisionShape(id, entries);
   if (!shape) return;
   const key = `${pos.x},${pos.y},${pos.z}`;
@@ -2759,7 +2789,8 @@ async function build() {
     const [xStr, yStr, zStr] = key.split(',');
     const pos = { x: parseInt(xStr, 10), y: parseInt(yStr, 10), z: parseInt(zStr, 10) };
     const modelEntries = await getBlockModels(id, props, pos, nbt);
-    blockInfo.set(key, { id, pos, entries: modelEntries, properties: props, nbt });
+    const stateKey = await blockStateKey(id, props);
+    blockInfo.set(key, { id, pos, entries: modelEntries, properties: props, nbt, stateKey });
     physicsBlocks.set(key, id);
     physicsStates.set(key, props);
     if (isFluidBlock(id)) fluidPositions.add(key);
