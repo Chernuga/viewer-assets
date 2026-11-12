@@ -2320,12 +2320,16 @@ function collectBlockEntityGeometry(info) {
   const model = blockEntityModels[id.replace('minecraft:', '')];
   if (!model) return false;
   if (id === 'lectern' && properties?.has_book !== 'true') return false;
+  if (id === 'beacon') {
+    const levels = info.nbt?.match(/levels\s*:\s*(\d+)/i)?.[1];
+    if (!levels || Number(levels) <= 0) return false;
+  }
   const yawByFacing = { north: Math.PI, east: -Math.PI / 2, south: 0, west: Math.PI / 2 };
   let yaw = yawByFacing[properties?.facing] || 0;
   if (properties?.rotation !== undefined) yaw += (Number(properties.rotation) / 16) * Math.PI * 2;
   const cos = Math.cos(yaw), sin = Math.sin(yaw);
   for (const quad of model.quads || []) {
-    let material = getBlockMaterial(quad.texture || model.texture, undefined, false, false);
+    let material = getBlockMaterial(quad.texture || model.texture, undefined, model.translucent === true, false);
     if (model.tint) {
       material = material.clone();
       material.color.set(model.tint);
