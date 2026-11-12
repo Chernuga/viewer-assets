@@ -77,7 +77,7 @@
     "startFlying": true
   },
   "ui": {
-    "creativeGuiScale": 1.5
+    "creativeGuiScale": "auto"
   }
 }
 

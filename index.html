@@ -56,8 +56,8 @@
     .error-overlay { position:absolute; top:10px; right:10px; max-width:400px; max-height:300px; overflow:auto; background:rgba(255,0,0,0.1); border:1px solid rgba(255,0,0,0.3); border-radius:8px; padding:8px; font-size:12px; color:#ff9999; display:none; z-index:20; white-space:pre-wrap; word-break:break-all; }
     .creative-bar { position:absolute; left:50%; bottom:0; transform:translateX(-50%); width:364px; height:44px; padding:0; border:0; background-image:url('minecraft/textures/gui/sprites/hud/hotbar.png'); background-size:364px 44px; background-repeat:no-repeat; image-rendering:pixelated; z-index:14; pointer-events:none; }
     .creative-slot { position:absolute; width:40px; height:40px; padding:0; border:0; background:transparent; cursor:pointer; overflow:visible; pointer-events:auto; }
-    .creative-slot img { position:absolute; left:4px; top:4px; width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
-    .creative-slot .hotbar-block-icon { position:absolute; left:4px; top:4px; width:32px; height:32px; image-rendering:pixelated; pointer-events:none; }
+    .creative-slot img { position:absolute; left:var(--hotbar-icon-inset,4px); top:var(--hotbar-icon-inset,4px); width:var(--hotbar-icon,32px); height:var(--hotbar-icon,32px); object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .creative-slot .hotbar-block-icon { position:absolute; left:var(--hotbar-icon-inset,4px); top:var(--hotbar-icon-inset,4px); width:var(--hotbar-icon,32px); height:var(--hotbar-icon,32px); image-rendering:pixelated; pointer-events:none; }
     .creative-slot.selected { background:transparent; z-index:4; }
     .creative-slot .slot-num { display:none; }
     .hotbar-selection { position:absolute; left:0; top:-2px; width:48px; height:46px; background-image:url('minecraft/textures/gui/sprites/hud/hotbar_selection.png'); background-size:48px 46px; background-repeat:no-repeat; image-rendering:pixelated; pointer-events:none; z-index:3; }
@@ -239,7 +239,7 @@ const CONFIG_DEFAULTS = {
     startFlying: true,
   },
   ui: {
-    creativeGuiScale: 1.5,
+    creativeGuiScale: 'auto',
   },
 };
 
@@ -4116,20 +4116,31 @@ async function creativeIconUrl(id, type = 'block') {
 function renderCreativeHotbar() {
   const bar = document.getElementById('creativeBar');
   if (!bar) return;
+  const s = (typeof mcUI !== 'undefined' && mcUI.scale) ? mcUI.scale : 2;
   bar.textContent = '';
+  bar.style.width = `${182 * s}px`;
+  bar.style.height = `${22 * s}px`;
   bar.style.backgroundImage = `url('${ASSET_BASE}/textures/gui/sprites/hud/hotbar.png')`;
+  bar.style.backgroundSize = `${182 * s}px ${22 * s}px`;
+  bar.style.setProperty('--hotbar-icon', `${16 * s}px`);
+  bar.style.setProperty('--hotbar-icon-inset', `${2 * s}px`);
   creativeHotbar.forEach((item, index) => {
     const slot = document.createElement('button');
     slot.type = 'button';
     slot.className = 'creative-slot' + (index === creativeSlot ? ' selected' : '');
     slot.title = `${index + 1}: ${creativeLabel(item.id)}`;
-    slot.style.left = `${index * 40}px`;
-    slot.style.top = '2px';
+    slot.style.left = `${index * 20 * s}px`;
+    slot.style.top = `${2 * s}px`;
+    slot.style.width = `${20 * s}px`;
+    slot.style.height = `${20 * s}px`;
     if (index === creativeSlot) {
       const sel = document.createElement('div');
       sel.className = 'hotbar-selection';
-      sel.style.left = '-4px';
-      sel.style.top = '-4px';
+      sel.style.left = `${-2 * s}px`;
+      sel.style.top = `${-2 * s}px`;
+      sel.style.width = `${24 * s}px`;
+      sel.style.height = `${23 * s}px`;
+      sel.style.backgroundSize = `${24 * s}px ${23 * s}px`;
       slot.appendChild(sel);
     }
     queueCreativeHotbarIcon(item, slot);
@@ -5244,6 +5255,31 @@ function mcFontImage() {
 }
 
 const mcFontTintCache = new Map();
+let mcGlyphAdvanceCache = null;
+function mcGlyphAdvances() {
+  if (mcGlyphAdvanceCache) return mcGlyphAdvanceCache;
+  const src = mcFontImage();
+  if (!src) return null;
+  const c = document.createElement('canvas');
+  c.width = src.width; c.height = src.height;
+  const g = c.getContext('2d');
+  g.drawImage(src, 0, 0);
+  const data = g.getImageData(0, 0, c.width, c.height).data;
+  const widths = new Uint8Array(256);
+  for (let code = 0; code < 256; code++) {
+    const col = code % 16, row = Math.floor(code / 16);
+    let right = -1;
+    for (let x = 0; x < 8; x++) {
+      for (let y = 0; y < 8; y++) {
+        if (data[((row * 8 + y) * c.width + col * 8 + x) * 4 + 3]) right = x;
+      }
+    }
+    widths[code] = code === 32 ? 4 : (right < 0 ? 0 : right + 2);
+  }
+  mcGlyphAdvanceCache = widths;
+  return widths;
+}
+
 function mcTintedFont(color) {
   const src = mcFontImage();
   if (!src) return null;
@@ -5262,21 +5298,27 @@ function mcTintedFont(color) {
 
 function mcText(ctx, text, x, y, color = '#404040', scale = 1) {
   const font = mcTintedFont(color);
-  if (!font) return;
+  const shadow = mcTintedFont('#3f3f3f');
+  const widths = mcGlyphAdvances();
+  if (!font || !widths) return;
   let cx = x;
   for (const ch of text) {
     const code = ch.charCodeAt(0);
-    if (code === 32) { cx += 4 * scale; continue; }
     const col = code % 16;
     const row = Math.floor(code / 16);
+    if (shadow && color !== '#3f3f3f') {
+      ctx.drawImage(shadow, col * 8, row * 8, 8, 8, cx + scale, y + scale, 8 * scale, 8 * scale);
+    }
     ctx.drawImage(font, col * 8, row * 8, 8, 8, cx, y, 8 * scale, 8 * scale);
-    cx += 6 * scale;
+    cx += (widths[code] || 0) * scale;
   }
 }
 
 function mcMeasureText(text, scale = 1) {
+  const widths = mcGlyphAdvances();
+  if (!widths) return 0;
   let w = 0;
-  for (const ch of text) w += ch === ' ' ? 4 * scale : 6 * scale;
+  for (const ch of text) w += (widths[ch.charCodeAt(0)] || 0) * scale;
   return w;
 }
 
@@ -5630,6 +5672,18 @@ function mcOnSearchInput(event) {
   mcRequestRender();
 }
 
+function mcAutoGuiScale() {
+  return Math.max(1, Math.min(4,
+    Math.floor(window.innerWidth / 320),
+    Math.floor(window.innerHeight / 240)));
+}
+
+function mcResolveGuiScale(value) {
+  if (value === 'auto' || value == null) return mcAutoGuiScale();
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(1, Math.min(4, n)) : mcAutoGuiScale();
+}
+
 function mcOpen() {
   mcUI.open = true;
   creativeInventoryOpen = true;
@@ -5659,7 +5713,7 @@ function mcClose() {
 openCreativeInventory = function() { mcOpen(); };
 closeCreativeInventory = function() { mcClose(); };
 initCreativeUI = function() {
-  mcUI.scale = CONFIG?.ui?.creativeGuiScale ?? 1.5;
+  mcUI.scale = mcResolveGuiScale(CONFIG?.ui?.creativeGuiScale);
   const canvas = document.getElementById('creativeCanvas');
   if (!canvas) return;
   canvas.addEventListener('pointermove', mcOnPointerMove);
@@ -5669,10 +5723,22 @@ initCreativeUI = function() {
   const input = document.getElementById('creativeSearchInput');
   if (input) input.addEventListener('input', mcOnSearchInput);
   window.setCreativeGuiScale = (scale, persist = false) => {
-    mcUI.scale = Math.max(0.75, Math.min(4, Number(scale) || 1.5));
-    if (persist) { try { localStorage.setItem('viewerCreativeGuiScale', String(mcUI.scale)); } catch {} }
+    mcUI.scale = mcResolveGuiScale(scale);
+    if (persist) { try { localStorage.setItem('viewerCreativeGuiScale', String(scale)); } catch {} }
+    renderCreativeHotbar();
     mcRender();
   };
+  window.setCreativeGuiScaleMode = (value) => {
+    mcUI.scale = mcResolveGuiScale(value);
+    renderCreativeHotbar();
+    mcRender();
+  };
+  window.addEventListener('resize', () => {
+    if (!mcUI.open) return;
+    if (CONFIG?.ui?.creativeGuiScale === 'auto') mcUI.scale = mcAutoGuiScale();
+    renderCreativeHotbar();
+    mcRender();
+  });
   window.openCreativeInventory = openCreativeInventory;
   window.closeCreativeInventory = closeCreativeInventory;
   window.isCreativeInventoryOpen = () => mcUI.open;
