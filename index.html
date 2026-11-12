@@ -57,6 +57,7 @@
     .creative-bar { position:absolute; left:50%; bottom:0; transform:translateX(-50%); width:364px; height:44px; padding:0; border:0; background-image:url('minecraft/textures/gui/sprites/hud/hotbar.png'); background-size:364px 44px; background-repeat:no-repeat; image-rendering:pixelated; z-index:14; pointer-events:none; }
     .creative-slot { position:absolute; width:40px; height:40px; padding:0; border:0; background:transparent; cursor:pointer; overflow:visible; pointer-events:auto; }
     .creative-slot img { position:absolute; left:4px; top:4px; width:32px; height:32px; object-fit:contain; image-rendering:pixelated; pointer-events:none; }
+    .creative-slot .hotbar-block-icon { position:absolute; left:4px; top:4px; width:32px; height:32px; image-rendering:pixelated; pointer-events:none; }
     .creative-slot.selected { background:transparent; z-index:4; }
     .creative-slot .slot-num { display:none; }
     .hotbar-selection { position:absolute; left:0; top:-2px; width:48px; height:46px; background-image:url('minecraft/textures/gui/sprites/hud/hotbar_selection.png'); background-size:48px 46px; background-repeat:no-repeat; image-rendering:pixelated; pointer-events:none; z-index:3; }
@@ -3617,6 +3618,87 @@ function creativeLabel(id) {
   return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+async function creativeBlockIconCanvas(id) {
+  const key = `canvas:${id}`;
+  if (creativeIconCache.has(key)) return creativeIconCache.get(key);
+  let canvas = null;
+  try {
+    const stateData = await loadBlockstate(id);
+    const refs = [];
+    if (stateData.variants) for (const v of Object.values(stateData.variants)) {
+      for (const a of (Array.isArray(v) ? v : [v])) if (a?.model) refs.push(a.model);
+    }
+    for (const part of stateData.multipart || []) {
+      const ap = part.apply; for (const a of (Array.isArray(ap) ? ap : [ap])) if (a?.model) refs.push(a.model);
+    }
+    const data = refs.length ? await loadModel(refs[0]) : null;
+    const els = data?.elements || [];
+    const fullCube = els.length === 1 &&
+      els[0].from?.[0] === 0 && els[0].from?.[1] === 0 && els[0].from?.[2] === 0 &&
+      els[0].to?.[0] === 16 && els[0].to?.[1] === 16 && els[0].to?.[2] === 16 &&
+      !els[0].rotation;
+    if (!fullCube) return null;
+    const pick = name => resolveTexture(data.textures?.[name] || data.textures?.all || data.textures?.particle, data.textures || {});
+    const topPath = pick('top'), sidePath = pick('side') || pick('all') || topPath;
+    const frontPath = pick('front') || sidePath;
+    const toUrl = path => {
+      if (!path || path === 'block/missing') return null;
+      let p = path.replace(/^minecraft:/, '');
+      if (!p.startsWith('textures/')) p = `textures/${p}`;
+      return `${ASSET_BASE}/${p}.png`;
+    };
+    const [topImg, sideImg, frontImg] = await Promise.all([
+      toUrl(topPath) ? loadImage(toUrl(topPath)) : null,
+      toUrl(sidePath) ? loadImage(toUrl(sidePath)) : null,
+      toUrl(frontPath) ? loadImage(toUrl(frontPath)) : null,
+    ]);
+    if (!topImg || !sideImg) return null;
+    canvas = document.createElement('canvas');
+    canvas.width = 32; canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    function quad(img, p0, p1, p2, p3, shade) {
+      const [x0, y0] = p0, [x1, y1] = p1, [x3, y3] = p3;
+      const a = (x1 - x0) / (img.width || 1), b = (y1 - y0) / (img.width || 1);
+      const c = (x3 - x0) / (img.height || 1), d = (y3 - y0) / (img.height || 1);
+      ctx.save();
+      ctx.beginPath(); ctx.moveTo(...p0); ctx.lineTo(...p1); ctx.lineTo(...p2); ctx.lineTo(...p3); ctx.closePath(); ctx.clip();
+      ctx.setTransform(a, b, c, d, x0, y0);
+      ctx.drawImage(img, 0, 0);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (shade) { ctx.fillStyle = `rgba(0,0,0,${shade})`; ctx.fill(); }
+      ctx.restore();
+    }
+    quad(topImg, [16, 1], [31, 8], [16, 15], [1, 8], 0);
+    quad(frontImg || sideImg, [1, 8], [16, 15], [16, 31], [1, 24], 0.18);
+    quad(sideImg, [16, 15], [31, 8], [31, 24], [16, 31], 0.32);
+  } catch (err) { canvas = null; }
+  creativeIconCache.set(key, canvas);
+  return canvas;
+}
+
+function queueCreativeHotbarIcon(item, slot) {
+  if (item.type === 'item') {
+    const img = document.createElement('img');
+    img.alt = '';
+    queueCreativeIcon(item.id, item.type, img);
+    slot.appendChild(img);
+    return;
+  }
+  const img = document.createElement('img');
+  img.alt = '';
+  slot.appendChild(img);
+  creativeBlockIconCanvas(item.id).then(canvas => {
+    if (canvas) {
+      canvas.className = 'hotbar-block-icon';
+      slot.replaceChild(canvas, img);
+    } else {
+      queueCreativeIcon(item.id, item.type, img);
+    }
+  });
+}
+
 async function creativeIconUrl(id, type = 'block') {
   const cacheKey = `${type}:${id}`;
   if (creativeIconCache.has(cacheKey)) return creativeIconCache.get(cacheKey);
@@ -3673,10 +3755,7 @@ function renderCreativeHotbar() {
       sel.style.top = '-4px';
       slot.appendChild(sel);
     }
-    const img = document.createElement('img');
-    img.alt = '';
-    queueCreativeIcon(item.id, item.type, img);
-    slot.appendChild(img);
+    queueCreativeHotbarIcon(item, slot);
     slot.addEventListener('click', () => {
       creativeSlot = index;
       creativeSelectedItem = item;
