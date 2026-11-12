@@ -145,14 +145,6 @@
   <div class="viewer">
     <canvas id="webgl-canvas"></canvas>
     <div id="crosshair"></div>
-    <div id="creativeBar" class="creative-bar" aria-label="Creative hotbar"></div>
-    <div id="inventoryOverlay" class="inventory-overlay" aria-hidden="true">
-      <div id="creativeCanvasWrap" class="creative-canvas-wrap">
-        <canvas id="creativeCanvas" class="creative-canvas"></canvas>
-        <canvas id="inventoryPlayer" class="creative-player-source" width="64" height="86"></canvas>
-        <input id="creativeSearchInput" class="creative-search-input" type="text" maxlength="50" autocomplete="off" spellcheck="false" aria-label="Search items" />
-      </div>
-    </div>
     <div id="mobileControls" class="mobile-controls" aria-hidden="true">
       <div id="joystick" class="joystick" aria-label="Movement joystick">
         <div id="joystickKnob" class="joystick-knob"></div>
@@ -1803,7 +1795,7 @@ async function loadBlockProperties() {
     if (beRes.ok) blockEntityModels = await beRes.json();
     const collisionRes = await fetch(new URL('viewer/block_collision_shapes.json', location.href));
     if (collisionRes.ok) blockCollisionShapes = await collisionRes.json();
-    const statesRes = await fetch(new URL('viewer/block_collision_states.json', location.href));
+    const statesRes = await fetch(new URL('viewer/block_collision_states.json', location.href), { cache: 'no-store' });
     if (statesRes.ok) blockCollisionStates = await statesRes.json();
     const itemsRes = await fetch(new URL('viewer/items.json', location.href));
     if (itemsRes.ok) creativeItems = await itemsRes.json();
@@ -5685,6 +5677,7 @@ function mcResolveGuiScale(value) {
 }
 
 function mcOpen() {
+  if (!document.getElementById('creativeCanvas')) return;
   mcUI.open = true;
   creativeInventoryOpen = true;
   mcUI.page = 0;
@@ -5769,6 +5762,11 @@ renderCreativeTabs = function() { mcRequestRender(); };
 renderCreativeInventory = function() { mcRequestRender(); };
 updateCreativePanelBackground = function() { mcRequestRender(); };
 setCreativeGuiScale = function(scale, persist = false) { window.setCreativeGuiScale?.(scale, persist); };
+
+window.__collisionProbe = async (id, props = {}) => {
+  const key = await blockStateKey(id, props);
+  return { key, state: blockCollisionStates[key] ?? null };
+};
 
 
 (async () => {
