@@ -2177,6 +2177,12 @@ function getBlockCollisionShape(id, entries) {
   return { full: false, boxes };
 }
 
+function normalizeCollisionBoxes(boxes) {
+  return boxes.map(b => Array.isArray(b)
+    ? { minX: b[0], minY: b[1], minZ: b[2], maxX: b[3], maxY: b[4], maxZ: b[5] }
+    : b);
+}
+
 function registerBlockCollision(info) {
   const { id, pos, entries, stateKey } = info;
   if (!entries || entries.length === 0) return;
@@ -2184,18 +2190,19 @@ function registerBlockCollision(info) {
   if (Array.isArray(stateBoxes)) {
     if (!stateBoxes.length) return;
     const key = `${pos.x},${pos.y},${pos.z}`;
-    const full = stateBoxes.length === 1 &&
-      stateBoxes[0][0] === 0 && stateBoxes[0][1] === 0 && stateBoxes[0][2] === 0 &&
-      stateBoxes[0][3] === 1 && stateBoxes[0][4] === 1 && stateBoxes[0][5] === 1;
+    const normalized = normalizeCollisionBoxes(stateBoxes);
+    const full = normalized.length === 1 &&
+      normalized[0].minX === 0 && normalized[0].minY === 0 && normalized[0].minZ === 0 &&
+      normalized[0].maxX === 1 && normalized[0].maxY === 1 && normalized[0].maxZ === 1;
     if (full) collisionSolids.add(key);
-    else collisionPartials.set(key, stateBoxes);
+    else collisionPartials.set(key, normalized);
     return;
   }
   const shape = getBlockCollisionShape(id, entries);
   if (!shape) return;
   const key = `${pos.x},${pos.y},${pos.z}`;
   if (shape.full) collisionSolids.add(key);
-  else if (shape.boxes.length) collisionPartials.set(key, shape.boxes);
+  else if (shape.boxes.length) collisionPartials.set(key, normalizeCollisionBoxes(shape.boxes));
 }
 
 const UVLOCK_BASIS = {
@@ -2986,9 +2993,15 @@ function playerCollidesAt(x, y, z, height = player.height) {
         const boxes = collisionPartials.get(key);
         if (!boxes) continue;
         for (const b of boxes) {
-          if (maxX > bx + b.minX + COLLISION_EPS && minX < bx + b.maxX - COLLISION_EPS &&
-              maxY > by + b.minY + COLLISION_EPS && minY < by + b.maxY - COLLISION_EPS &&
-              maxZ > bz + b.minZ + COLLISION_EPS && minZ < bz + b.maxZ - COLLISION_EPS) {
+          const bminX = Array.isArray(b) ? b[0] : b.minX;
+          const bminY = Array.isArray(b) ? b[1] : b.minY;
+          const bminZ = Array.isArray(b) ? b[2] : b.minZ;
+          const bmaxX = Array.isArray(b) ? b[3] : b.maxX;
+          const bmaxY = Array.isArray(b) ? b[4] : b.maxY;
+          const bmaxZ = Array.isArray(b) ? b[5] : b.maxZ;
+          if (maxX > bx + bminX + COLLISION_EPS && minX < bx + bmaxX - COLLISION_EPS &&
+              maxY > by + bminY + COLLISION_EPS && minY < by + bmaxY - COLLISION_EPS &&
+              maxZ > bz + bminZ + COLLISION_EPS && minZ < bz + bmaxZ - COLLISION_EPS) {
             return true;
           }
         }
@@ -5767,6 +5780,14 @@ window.__collisionProbe = async (id, props = {}) => {
   const key = await blockStateKey(id, props);
   return { key, state: blockCollisionStates[key] ?? null };
 };
+
+window.__collisionDump = () => ({
+  solids: [...collisionSolids],
+  partials: [...collisionPartials.entries()],
+  player: { x: player.pos.x, y: player.pos.y, z: player.pos.z, height: player.height, onGround: player.onGround },
+});
+
+window.__playerCollides = (x, y, z, height) => playerCollidesAt(x, y, z, height ?? player.height);
 
 
 (async () => {
