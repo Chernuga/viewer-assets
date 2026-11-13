@@ -2187,10 +2187,43 @@ function normalizeCollisionBoxes(boxes) {
     : b);
 }
 
+let collisionStateIndex = null;
+const collisionLookupCache = new Map();
+
+function collisionStateFor(stateKey) {
+  if (Object.prototype.hasOwnProperty.call(blockCollisionStates, stateKey)) {
+    return blockCollisionStates[stateKey];
+  }
+  if (collisionLookupCache.has(stateKey)) return collisionLookupCache.get(stateKey);
+  if (!collisionStateIndex) {
+    collisionStateIndex = new Map();
+    for (const key of Object.keys(blockCollisionStates)) {
+      const open = key.indexOf('[');
+      const base = open === -1 ? key : key.slice(0, open);
+      const props = open === -1 ? [] : key.slice(open + 1, -1).split(',').map(p => p.split('=')[0]);
+      let list = collisionStateIndex.get(base);
+      if (!list) collisionStateIndex.set(base, list = []);
+      list.push({ key, props });
+    }
+  }
+  const open = stateKey.indexOf('[');
+  const base = open === -1 ? stateKey : stateKey.slice(0, open);
+  const wanted = open === -1 ? [] : stateKey.slice(open + 1, -1).split(',').map(p => p.split('=')[0]);
+  let best = null, bestExtra = Infinity;
+  for (const candidate of collisionStateIndex.get(base) || []) {
+    if (!wanted.every(p => candidate.props.includes(p))) continue;
+    const extra = candidate.props.length - wanted.length;
+    if (extra < bestExtra) { best = candidate; bestExtra = extra; }
+  }
+  const result = best ? blockCollisionStates[best.key] : null;
+  collisionLookupCache.set(stateKey, result);
+  return result;
+}
+
 function registerBlockCollision(info) {
   const { id, pos, entries, stateKey } = info;
   if (!entries || entries.length === 0) return;
-  const stateBoxes = stateKey ? blockCollisionStates[stateKey] : null;
+  const stateBoxes = stateKey ? collisionStateFor(stateKey) : null;
   if (Array.isArray(stateBoxes)) {
     if (!stateBoxes.length) return;
     const key = `${pos.x},${pos.y},${pos.z}`;
@@ -5891,7 +5924,7 @@ setCreativeGuiScale = function(scale, persist = false) { window.setCreativeGuiSc
 
 window.__collisionProbe = async (id, props = {}) => {
   const key = await blockStateKey(id, props);
-  return { key, state: blockCollisionStates[key] ?? null };
+  return { key, state: collisionStateFor(key) ?? null };
 };
 
 window.__collisionDump = () => ({
