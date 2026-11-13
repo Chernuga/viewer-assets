@@ -2986,10 +2986,17 @@ function playerCollidesAt(x, y, z, height = player.height) {
   const z0 = Math.floor(minZ - 0.5), z1 = Math.floor(maxZ - 0.5 - COLLISION_EPS);
 
   for (let bx = x0; bx <= x1; bx++) {
-    for (let by = y0; by <= y1; by++) {
+    for (let by = y0 - 1; by <= y1; by++) {
       for (let bz = z0; bz <= z1; bz++) {
         const key = bx + ',' + by + ',' + bz;
-        if (collisionSolids.has(key)) return true;
+        if (collisionSolids.has(key)) {
+          if (maxX > bx + 0.5 + COLLISION_EPS && minX < bx + 1.5 - COLLISION_EPS &&
+              maxY > by + 0.5 + COLLISION_EPS && minY < by + 1.5 - COLLISION_EPS &&
+              maxZ > bz + 0.5 + COLLISION_EPS && minZ < bz + 1.5 - COLLISION_EPS) {
+            return true;
+          }
+          continue;
+        }
         const boxes = collisionPartials.get(key);
         if (!boxes) continue;
         for (const b of boxes) {
@@ -2999,9 +3006,9 @@ function playerCollidesAt(x, y, z, height = player.height) {
           const bmaxX = Array.isArray(b) ? b[3] : b.maxX;
           const bmaxY = Array.isArray(b) ? b[4] : b.maxY;
           const bmaxZ = Array.isArray(b) ? b[5] : b.maxZ;
-          if (maxX > bx + bminX + COLLISION_EPS && minX < bx + bmaxX - COLLISION_EPS &&
-              maxY > by + bminY + COLLISION_EPS && minY < by + bmaxY - COLLISION_EPS &&
-              maxZ > bz + bminZ + COLLISION_EPS && minZ < bz + bmaxZ - COLLISION_EPS) {
+          if (maxX > bx + 0.5 + bminX + COLLISION_EPS && minX < bx + 0.5 + bmaxX - COLLISION_EPS &&
+              maxY > by + 0.5 + bminY + COLLISION_EPS && minY < by + 0.5 + bmaxY - COLLISION_EPS &&
+              maxZ > bz + 0.5 + bminZ + COLLISION_EPS && minZ < bz + 0.5 + bmaxZ - COLLISION_EPS) {
             return true;
           }
         }
