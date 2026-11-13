@@ -443,6 +443,7 @@ function createAlphaMaskTexture(image, frameCount) {
  * rarer partial shapes (slabs, stairs, fences, plants...) in a Map. */
 const collisionSolids = new Set();
 const collisionPartials = new Map();
+const collisionFallbacks = new Map();
 let hitboxDebugEnabled = false;
 let hitboxGroup = null;
 let playerHitbox = null;
@@ -2176,7 +2177,15 @@ function getBlockCollisionShape(id, entries) {
     const shape = getEntryCollisionShape(entry);
     if (!shape) continue;
     if (shape.full) return { full: true, boxes: [] };
-    for (const box of shape.boxes) boxes.push(box);
+    for (const box of shape.boxes) {
+      // Model-derived boxes are already in the rendered [0.5, 1.5] block cell.
+      // Convert them back to local [0, 1] shape coordinates so the collision
+      // query applies exactly one block-cell translation.
+      boxes.push({
+        minX: box.minX - 0.5, minY: box.minY - 0.5, minZ: box.minZ - 0.5,
+        maxX: box.maxX - 0.5, maxY: box.maxY - 0.5, maxZ: box.maxZ - 0.5,
+      });
+    }
   }
   return { full: false, boxes };
 }
@@ -2200,7 +2209,7 @@ function collisionStateFor(stateKey) {
     for (const key of Object.keys(blockCollisionStates)) {
       const open = key.indexOf('[');
       const base = open === -1 ? key : key.slice(0, open);
-      const props = open === -1 ? [] : key.slice(open + 1, -1).split(',').map(p => p.split('=')[0]);
+      const props = open === -1 ? [] : key.slice(open + 1, -1).split(',');
       let list = collisionStateIndex.get(base);
       if (!list) collisionStateIndex.set(base, list = []);
       list.push({ key, props });
@@ -2208,11 +2217,17 @@ function collisionStateFor(stateKey) {
   }
   const open = stateKey.indexOf('[');
   const base = open === -1 ? stateKey : stateKey.slice(0, open);
-  const wanted = open === -1 ? [] : stateKey.slice(open + 1, -1).split(',').map(p => p.split('=')[0]);
+  const wanted = new Map(open === -1 ? [] : stateKey.slice(open + 1, -1).split(',').map(p => p.split('=')));
   let best = null, bestExtra = Infinity;
   for (const candidate of collisionStateIndex.get(base) || []) {
-    if (!wanted.every(p => candidate.props.includes(p))) continue;
-    const extra = candidate.props.length - wanted.length;
+    const candidateProps = candidate.props.map(p => p.split('='));
+    const candidateMap = new Map(candidateProps);
+    let compatible = true;
+    for (const [name, value] of candidateMap) {
+      if (wanted.has(name) && wanted.get(name) !== value) { compatible = false; break; }
+    }
+    if (!compatible) continue;
+    const extra = candidateProps.length - [...candidateMap.keys()].filter(name => wanted.has(name)).length;
     if (extra < bestExtra) { best = candidate; bestExtra = extra; }
   }
   const result = best ? blockCollisionStates[best.key] : null;
@@ -2237,6 +2252,7 @@ function registerBlockCollision(info) {
   }
   const shape = getBlockCollisionShape(id, entries);
   if (!shape) return;
+  collisionFallbacks.set(`${pos.x},${pos.y},${pos.z}`, { id, stateKey });
   const key = `${pos.x},${pos.y},${pos.z}`;
   if (shape.full) collisionSolids.add(key);
   else if (shape.boxes.length) collisionPartials.set(key, normalizeCollisionBoxes(shape.boxes));
@@ -2677,6 +2693,7 @@ function clearWorld() {
   missingTextureReported.clear();
   collisionSolids.clear();
   collisionPartials.clear();
+  collisionFallbacks.clear();
   if (hitboxGroup) {
     scene.remove(hitboxGroup);
     hitboxGroup.geometry.dispose();
@@ -5930,6 +5947,7 @@ window.__collisionProbe = async (id, props = {}) => {
 window.__collisionDump = () => ({
   solids: [...collisionSolids],
   partials: [...collisionPartials.entries()],
+  fallbacks: [...collisionFallbacks.entries()],
   player: { x: player.pos.x, y: player.pos.y, z: player.pos.z, height: player.height, onGround: player.onGround },
 });
 
