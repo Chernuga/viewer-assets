@@ -5901,6 +5901,31 @@ window.__collisionDump = () => ({
 });
 
 window.__playerCollides = (x, y, z, height) => playerCollidesAt(x, y, z, height ?? player.height);
+window.__setPlayerView = (x, y, z, yaw, pitch) => {
+  player.pos.set(x, y, z);
+  player.prevPos.copy(player.pos);
+  player.vel.set(0, 0, 0);
+  player.yaw = yaw;
+  player.pitch = pitch;
+  player.flying = true;
+};
+
+window.__sceneBounds = () => {
+  const meshes = [];
+  for (const child of worldGroup.children) {
+    if (!child.geometry) continue;
+    child.geometry.computeBoundingBox();
+    const b = child.geometry.boundingBox;
+    meshes.push({ name: child.material?.name || child.material?.map?.source?.data?.src || '', min: b.min.toArray(), max: b.max.toArray() });
+  }
+  let hit = null;
+  if (hitboxGroup) {
+    hitboxGroup.geometry.computeBoundingBox();
+    const b = hitboxGroup.geometry.boundingBox;
+    hit = { min: b.min.toArray(), max: b.max.toArray() };
+  }
+  return { meshes, hit };
+};
 
 
 window.addEventListener('keydown', (e) => {
