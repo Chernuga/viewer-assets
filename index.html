@@ -443,6 +443,10 @@ function createAlphaMaskTexture(image, frameCount) {
  * rarer partial shapes (slabs, stairs, fences, plants...) in a Map. */
 const collisionSolids = new Set();
 const collisionPartials = new Map();
+let hitboxDebugEnabled = false;
+let hitboxGroup = null;
+let playerHitbox = null;
+let hitboxF3Held = false;
 const collisionShapeCache = new WeakMap();
 let worldBounds = null;
 
@@ -2640,6 +2644,18 @@ function clearWorld() {
   missingTextureReported.clear();
   collisionSolids.clear();
   collisionPartials.clear();
+  if (hitboxGroup) {
+    scene.remove(hitboxGroup);
+    hitboxGroup.geometry.dispose();
+    hitboxGroup.material.dispose();
+    hitboxGroup = null;
+  }
+  if (playerHitbox) {
+    scene.remove(playerHitbox);
+    playerHitbox.geometry.dispose();
+    playerHitbox.material.dispose();
+    playerHitbox = null;
+  }
   physicsBlocks.clear();
   physicsStates.clear();
   worldBounds = null;
@@ -2883,6 +2899,8 @@ async function build() {
 
   flushBuckets();
   reflectionDirty = true;
+  rebuildHitboxDebug();
+  updatePlayerHitbox();
   updatePlayerSpawnFromWorld();
   unstuckPlayer();
   const t3 = performance.now();
@@ -3021,6 +3039,93 @@ function playerCollidesAt(x, y, z, height = player.height) {
 function playerHasSupport(x, y, z) {
   return playerCollidesAt(x, y - 0.02, z);
 }
+
+/* ============================= HITBOX DEBUG (F3+B) ============================= */
+
+function addHitboxBox(positions, x0, y0, z0, x1, y1, z1) {
+  const p = [
+    [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1],
+    [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1],
+  ];
+  const edges = [
+    [0, 1], [1, 2], [2, 3], [3, 0],
+    [4, 5], [5, 6], [6, 7], [7, 4],
+    [0, 4], [1, 5], [2, 6], [3, 7],
+  ];
+  for (const [a, b] of edges) positions.push(...p[a], ...p[b]);
+}
+
+function rebuildHitboxDebug() {
+  if (hitboxGroup) {
+    scene.remove(hitboxGroup);
+    hitboxGroup.geometry.dispose();
+    hitboxGroup.material.dispose();
+    hitboxGroup = null;
+  }
+  if (!hitboxDebugEnabled) return;
+
+  const positions = [];
+  for (const key of collisionSolids) {
+    const [x, y, z] = key.split(',').map(Number);
+    addHitboxBox(positions, x + 0.5, y + 0.5, z + 0.5, x + 1.5, y + 1.5, z + 1.5);
+  }
+  for (const [key, boxes] of collisionPartials) {
+    const [x, y, z] = key.split(',').map(Number);
+    for (const b of boxes) {
+      const minX = Array.isArray(b) ? b[0] : b.minX;
+      const minY = Array.isArray(b) ? b[1] : b.minY;
+      const minZ = Array.isArray(b) ? b[2] : b.minZ;
+      const maxX = Array.isArray(b) ? b[3] : b.maxX;
+      const maxY = Array.isArray(b) ? b[4] : b.maxY;
+      const maxZ = Array.isArray(b) ? b[5] : b.maxZ;
+      addHitboxBox(positions,
+        x + 0.5 + minX, y + 0.5 + minY, z + 0.5 + minZ,
+        x + 0.5 + maxX, y + 0.5 + maxY, z + 0.5 + maxZ);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  const material = new THREE.LineBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.9,
+    depthTest: false, depthWrite: false,
+  });
+  hitboxGroup = new THREE.LineSegments(geometry, material);
+  hitboxGroup.renderOrder = 999;
+  scene.add(hitboxGroup);
+
+  if (!playerHitbox) {
+    const pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(72), 3));
+    const pm = new THREE.LineBasicMaterial({
+      color: 0xff5555, transparent: true, opacity: 1,
+      depthTest: false, depthWrite: false,
+    });
+    playerHitbox = new THREE.LineSegments(pg, pm);
+    playerHitbox.renderOrder = 1000;
+    scene.add(playerHitbox);
+  }
+}
+
+function updatePlayerHitbox() {
+  if (!hitboxDebugEnabled || !playerHitbox) return;
+  const positions = [];
+  addHitboxBox(positions,
+    player.pos.x - PLAYER_HALF_WIDTH, player.pos.y, player.pos.z - PLAYER_HALF_WIDTH,
+    player.pos.x + PLAYER_HALF_WIDTH, player.pos.y + player.height, player.pos.z + PLAYER_HALF_WIDTH);
+  playerHitbox.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  playerHitbox.geometry.attributes.position.needsUpdate = true;
+  playerHitbox.geometry.computeBoundingSphere();
+}
+
+function toggleHitboxDebug() {
+  hitboxDebugEnabled = !hitboxDebugEnabled;
+  rebuildHitboxDebug();
+  updatePlayerHitbox();
+  const hud = document.getElementById('hud');
+  if (hud && !hitboxDebugEnabled) updateHud();
+}
+
+window.toggleHitboxes = toggleHitboxDebug;
 
 /* Move along one axis in <=0.2 block sweeps so terminal velocity cannot tunnel
  * through a floor, then bisect the last step to rest exactly on the surface. */
@@ -5170,6 +5275,7 @@ function animate() {
   }
   if (cameraMode === 'creative') updatePlayer(delta);
   else controls.update();
+  updatePlayerHitbox();
   updateSky(delta);
   updateCelestialBodies(delta);
   updateLighting();
@@ -5795,6 +5901,23 @@ window.__collisionDump = () => ({
 });
 
 window.__playerCollides = (x, y, z, height) => playerCollidesAt(x, y, z, height ?? player.height);
+
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'F3' || e.code === 'F3') {
+    hitboxF3Held = true;
+    e.preventDefault();
+    return;
+  }
+  if (hitboxF3Held && e.code === 'KeyB') {
+    e.preventDefault();
+    toggleHitboxDebug();
+  }
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'F3' || e.code === 'F3') hitboxF3Held = false;
+});
+window.addEventListener('blur', () => { hitboxF3Held = false; });
 
 
 (async () => {
