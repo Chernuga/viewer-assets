@@ -1792,13 +1792,15 @@ async function loadColormaps() {
 }
 
 async function fetchViewerJson(name, options = {}) {
+  const cache = { cache: 'no-store', ...options };
+  const version = encodeURIComponent(REPO_BASE || 'dev');
   const candidates = [
-    new URL(`viewer/${name}`, location.href).href,
-    `${REPO_BASE}/viewer/${name}`,
+    `${new URL(`viewer/${name}`, location.href).href}?v=${version}`,
+    `${REPO_BASE}/viewer/${name}?v=${version}`,
   ];
   for (const url of candidates) {
     try {
-      const response = await fetch(url, options);
+      const response = await fetch(url, cache);
       if (response.ok) return response;
     } catch (err) {
       console.warn(`Could not load ${name} from ${url}`, err);
