@@ -3189,6 +3189,13 @@ function toggleHitboxDebug() {
 }
 
 window.toggleHitboxes = toggleHitboxDebug;
+window.__hitboxStats = () => ({
+  enabled: hitboxDebugEnabled,
+  group: hitboxGroup ? hitboxGroup.geometry.attributes.position.count : 0,
+  solids: collisionSolids.size,
+  partials: collisionPartials.size,
+  fallbacks: collisionFallbacks.size,
+});
 
 /* Move along one axis in <=0.2 block sweeps so terminal velocity cannot tunnel
  * through a floor, then bisect the last step to rest exactly on the surface. */
@@ -6017,7 +6024,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (hitboxF3Held && e.code === 'KeyB') {
     e.preventDefault();
-    toggleHitboxDebug();
+    if (!e.repeat) toggleHitboxDebug();
   }
 });
 window.addEventListener('keyup', (e) => {
