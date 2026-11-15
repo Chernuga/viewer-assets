@@ -2609,30 +2609,6 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
   // blocks (barriers, light blocks, etc.) have a state collision shape but no
   // visible model elements.
   registerBlockCollision(info);
-  if (isShaderBlock(id)) {
-    const shaderConfig = await getShaderConfigForBlock(id);
-    const overrideMaterial = shaderConfig ? await createMCShaderMaterial(shaderConfig) : null;
-    const material = overrideMaterial || new THREE.MeshBasicMaterial({
-      color: 0x220044, side: THREE.DoubleSide, transparent: false,
-    });
-    const bucket = getBucket(material);
-    const x0 = pos.x + 0.5, y0 = pos.y + 0.5, z0 = pos.z + 0.5;
-    const x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
-    const uvs = [[0, 0], [1, 0], [1, 1], [0, 1]];
-    const faces = [
-      [[x1,y0,z0],[x1,y0,z1],[x1,y1,z1],[x1,y1,z0],[1,0,0]],
-      [[x0,y0,z1],[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[-1,0,0]],
-      [[x0,y1,z1],[x1,y1,z1],[x1,y0,z1],[x0,y0,z1],[0,0,1]],
-      [[x1,y1,z0],[x0,y1,z0],[x0,y0,z0],[x1,y0,z0],[0,0,-1]],
-      [[x0,y1,z0],[x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[0,1,0]],
-      [[x0,y0,z1],[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[0,-1,0]],
-    ];
-    for (const [a,b,c,d,n] of faces) {
-      pushQuad(bucket, new THREE.Vector3(...a), new THREE.Vector3(...b), new THREE.Vector3(...c), new THREE.Vector3(...d),
-        new THREE.Vector3(...n), uvs, `${pos.x},${pos.y},${pos.z}`);
-    }
-    return;
-  }
   if (!entries || entries.length === 0) return;
 
   const blockKey = `${pos.x},${pos.y},${pos.z}`;
