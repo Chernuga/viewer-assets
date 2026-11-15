@@ -2237,7 +2237,6 @@ function collisionStateFor(stateKey) {
 
 function registerBlockCollision(info) {
   const { id, pos, entries, stateKey } = info;
-  if (!entries || entries.length === 0) return;
   const stateBoxes = stateKey ? collisionStateFor(stateKey) : null;
   if (Array.isArray(stateBoxes)) {
     if (!stateBoxes.length) return;
@@ -2250,12 +2249,12 @@ function registerBlockCollision(info) {
     else collisionPartials.set(key, normalized);
     return;
   }
-  const shape = getBlockCollisionShape(id, entries);
-  if (!shape) return;
-  collisionFallbacks.set(`${pos.x},${pos.y},${pos.z}`, { id, stateKey });
-  const key = `${pos.x},${pos.y},${pos.z}`;
-  if (shape.full) collisionSolids.add(key);
-  else if (shape.boxes.length) collisionPartials.set(key, normalizeCollisionBoxes(shape.boxes));
+  if (!entries || entries.length === 0) return;
+  // Never derive a collision box from the render model. A model-derived box
+  // cannot represent fence/wall connections, azalea gaps, or block-specific
+  // collision overrides. If the exact state is unavailable, leave the block
+  // without collision until it is added to the extracted state table.
+  return;
 }
 
 const UVLOCK_BASIS = {
@@ -2523,14 +2522,16 @@ function collectBlockEntityGeometry(info) {
 
 async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set()) {
   const { id, pos, entries, properties } = info;
-  if (!entries || entries.length === 0) return;
 
+  // Collision is independent of whether the block has a render model. Some
+  // blocks (barriers, light blocks, etc.) have a state collision shape but no
+  // visible model elements.
   registerBlockCollision(info);
+  if (!entries || entries.length === 0) return;
 
   const blockKey = `${pos.x},${pos.y},${pos.z}`;
   const beModel = blockEntityModels[id.replace('minecraft:', '')];
   if (beModel && !beModel.extra && collectBlockEntityGeometry(info)) {
-    collisionSolids.add(blockKey);
     return;
   }
 
@@ -5980,11 +5981,11 @@ window.__setPlayerView = (x, y, z, yaw, pitch) => {
   player.pitch = pitch;
   player.flying = true;
 };
-window.__testMove = (x, y, z, dx, dz) => {
+window.__testMove = (x, y, z, dx, dz, vy = 0) => {
   player.pos.set(x, y, z);
   player.prevPos.copy(player.pos);
-  player.vel.set(dx, 0, dz);
-  player.onGround = true;
+  player.vel.set(dx, vy, dz);
+  player.onGround = vy === 0;
   player.flying = false;
   movePlayer();
   return { x: player.pos.x, y: player.pos.y, z: player.pos.z, colliding: playerCollidesAt(player.pos.x, player.pos.y, player.pos.z) };
