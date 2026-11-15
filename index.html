@@ -2446,7 +2446,7 @@ function bannerPatternsFromNbt(nbt) {
 
 function potPatternsFromNbt(nbt) {
   if (!nbt) return [];
-  const list = nbt.match(/sherds\s*:\s*\[([^\]]*)\]/i)?.[1] || '';
+  const list = nbt.match(/(?:sherds|pot_decorations)\s*:\s*\[([^\]]*)\]/i)?.[1] || '';
   return [...list.matchAll(/"([^"]+)"/g)].map(m => m[1].replace('minecraft:', '').replace('_pottery_sherd', ''));
 }
 
