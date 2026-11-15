@@ -874,11 +874,6 @@ const SHADER_BLOCK_IDS = new Set();
 function isShaderBlock(blockId) {
   return blockProperties[blockId.replace('minecraft:', '')]?.shader === 'end_portal';
 }
-window.__debugBlockProps = () => ({
-  portal: blockProperties.end_portal,
-  shader: isShaderBlock('end_portal'),
-  loaded: blockPropertiesReady,
-});
 
 async function getShaderConfigForBlock(blockId) {
   const id = blockId.replace('minecraft:', '');
@@ -2493,7 +2488,7 @@ function pushBlockEntityQuad(quad, texture, model, pos, yaw, part = null, normal
     local.add(offset);
     local.applyQuaternion(blockRotation);
     local.addScaledVector(normal, normalOffset);
-    return new THREE.Vector3(pos.x + base + local.x, pos.y + 0.5 + local.y, pos.z + base + local.z);
+    return new THREE.Vector3(pos.x + base + local.x, pos.y + base + local.y, pos.z + base + local.z);
   });
   const uvs = (quad.uvs || []).map(([u, v]) => [u, model.flipV === false ? v : 1 - v]);
   let material = getBlockMaterial(texture, undefined, model.translucent === true, false);
