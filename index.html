@@ -3115,12 +3115,24 @@ function rebuildHitboxDebug() {
   if (!hitboxDebugEnabled) return;
 
   const positions = [];
+  const view = camera.position;
+  const maxDistanceSq = 48 * 48;
+  const isFull = (x, y, z) => collisionSolids.has(`${x},${y},${z}`);
+  const isBuried = (x, y, z) =>
+    isFull(x + 1, y, z) && isFull(x - 1, y, z) &&
+    isFull(x, y + 1, z) && isFull(x, y - 1, z) &&
+    isFull(x, y, z + 1) && isFull(x, y, z - 1);
+
   for (const key of collisionSolids) {
     const [x, y, z] = key.split(',').map(Number);
+    const cx = x + 1, cy = y + 1, cz = z + 1;
+    if ((cx - view.x) ** 2 + (cy - view.y) ** 2 + (cz - view.z) ** 2 > maxDistanceSq) continue;
+    if (isBuried(x, y, z)) continue;
     addHitboxBox(positions, x + 0.5, y + 0.5, z + 0.5, x + 1.5, y + 1.5, z + 1.5);
   }
   for (const [key, boxes] of collisionPartials) {
     const [x, y, z] = key.split(',').map(Number);
+    if ((x + 1 - view.x) ** 2 + (y + 1 - view.y) ** 2 + (z + 1 - view.z) ** 2 > maxDistanceSq) continue;
     for (const b of boxes) {
       const minX = Array.isArray(b) ? b[0] : b.minX;
       const minY = Array.isArray(b) ? b[1] : b.minY;
@@ -3136,22 +3148,22 @@ function rebuildHitboxDebug() {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   const material = new THREE.LineBasicMaterial({
-    color: 0xffffff, transparent: true, opacity: 0.9,
-    depthTest: false, depthWrite: false,
+    color: 0xffffff, transparent: true, opacity: 0.62,
+    depthTest: true, depthWrite: false,
   });
   hitboxGroup = new THREE.LineSegments(geometry, material);
-  hitboxGroup.renderOrder = 999;
+  hitboxGroup.renderOrder = 20;
   scene.add(hitboxGroup);
 
   if (!playerHitbox) {
     const pg = new THREE.BufferGeometry();
     pg.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(72), 3));
     const pm = new THREE.LineBasicMaterial({
-      color: 0xff5555, transparent: true, opacity: 1,
-      depthTest: false, depthWrite: false,
+      color: 0xff5555, transparent: true, opacity: 0.9,
+      depthTest: true, depthWrite: false,
     });
     playerHitbox = new THREE.LineSegments(pg, pm);
-    playerHitbox.renderOrder = 1000;
+    playerHitbox.renderOrder = 21;
     scene.add(playerHitbox);
   }
 }
