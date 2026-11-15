@@ -3286,6 +3286,14 @@ function movePlayer() {
   if (!player.onGround) {
     player.onGround = playerHasSupport(player.pos.x, player.pos.y, player.pos.z);
   }
+
+  // A sweep can still finish with the player's feet inside a complex shape
+  // (azalea bushes are several disconnected AABBs with gaps). When that
+  // happens horizontal movement is blocked in every direction and only a jump
+  // escapes. Recover to the nearest non-overlapping position instead.
+  if (playerCollidesAt(player.pos.x, player.pos.y, player.pos.z)) {
+    unstuckPlayer();
+  }
 }
 
 /* ------------------------------- spawning ------------------------------- */
@@ -5971,6 +5979,15 @@ window.__setPlayerView = (x, y, z, yaw, pitch) => {
   player.yaw = yaw;
   player.pitch = pitch;
   player.flying = true;
+};
+window.__testMove = (x, y, z, dx, dz) => {
+  player.pos.set(x, y, z);
+  player.prevPos.copy(player.pos);
+  player.vel.set(dx, 0, dz);
+  player.onGround = true;
+  player.flying = false;
+  movePlayer();
+  return { x: player.pos.x, y: player.pos.y, z: player.pos.z, colliding: playerCollidesAt(player.pos.x, player.pos.y, player.pos.z) };
 };
 
 window.__sceneBounds = () => {
