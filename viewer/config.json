@@ -43,11 +43,11 @@
     "blinkAmount": 0.4
   },
   "animation": {
-    "shaderSpeed": 0.00005
+    "shaderSpeed": 5e-05
   },
   "render": {
     "concurrency": 120,
-    "heightMap": true,
+    "heightMap": false,
     "reflections": false,
     "flatReflections": true,
     "reflectionStrength": 0.5,
@@ -80,4 +80,3 @@
     "creativeGuiScale": "auto"
   }
 }
-

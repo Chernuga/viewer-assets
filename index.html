@@ -205,7 +205,7 @@ const CONFIG_DEFAULTS = {
   render: {
     dedupeCoincidentFaces: true,
     concurrency: 12,
-    heightMap: true,
+    heightMap: false,
     reflections: false,
     reflectionStrength: 0.5,
     reflectionType: 'normal',
@@ -870,22 +870,27 @@ uniform vec3 CameraOffset;
   return p;
 }
 
-const SHADER_BLOCK_IDS = new Set(['end_portal', 'end_gateway']);
+const SHADER_BLOCK_IDS = new Set();
+function isShaderBlock(blockId) {
+  return blockProperties[blockId.replace('minecraft:', '')]?.shader === 'end_portal';
+}
+window.__debugBlockProps = () => ({
+  portal: blockProperties.end_portal,
+  shader: isShaderBlock('end_portal'),
+  loaded: blockPropertiesReady,
+});
 
 async function getShaderConfigForBlock(blockId) {
   const id = blockId.replace('minecraft:', '');
-  if (id === 'end_portal') return {
-    vshPath: 'core/rendertype_end_portal.vsh', fshPath: 'core/rendertype_end_portal.fsh',
-    defines: { PORTAL_LAYERS: 15 },
-    textures: { Sampler0: getTexture('environment/end_sky'), Sampler1: getTexture('entity/end_portal') },
-    transparent: false, side: THREE.DoubleSide,
-  };
-  if (id === 'end_gateway') return {
-    vshPath: 'core/rendertype_end_portal.vsh', fshPath: 'core/rendertype_end_portal.fsh',
-    defines: { PORTAL_LAYERS: 16 },
-    textures: { Sampler0: getTexture('environment/end_sky'), Sampler1: getTexture('entity/end_portal') },
-    transparent: false, side: THREE.DoubleSide,
-  };
+  const props = blockProperties[id];
+  if (props?.shader === 'end_portal') {
+    return {
+      vshPath: 'core/rendertype_end_portal.vsh', fshPath: 'core/rendertype_end_portal.fsh',
+      defines: { PORTAL_LAYERS: props.shaderLayers || 15 },
+      textures: { Sampler0: getTexture('environment/end_sky'), Sampler1: getTexture('entity/end_portal') },
+      transparent: false, side: THREE.DoubleSide,
+    };
+  }
   return null;
 }
 
@@ -2477,6 +2482,7 @@ function pushBlockEntityQuad(quad, texture, model, pos, yaw, part = null, normal
     : null;
   const blockRotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
   const offset = part ? new THREE.Vector3(part.xyz[0] / 16, part.xyz[1] / 16, part.xyz[2] / 16) : new THREE.Vector3();
+  const base = model.origin === 'corner' ? 0.5 : 1;
   let n = quad.normal || [0, 1, 0];
   const normal = new THREE.Vector3(n[0], n[1], n[2]);
   if (partRotation) normal.applyQuaternion(partRotation);
@@ -2487,7 +2493,7 @@ function pushBlockEntityQuad(quad, texture, model, pos, yaw, part = null, normal
     local.add(offset);
     local.applyQuaternion(blockRotation);
     local.addScaledVector(normal, normalOffset);
-    return new THREE.Vector3(pos.x + 0.5 + local.x, pos.y + 0.5 + local.y, pos.z + 0.5 + local.z);
+    return new THREE.Vector3(pos.x + base + local.x, pos.y + 0.5 + local.y, pos.z + base + local.z);
   });
   const uvs = (quad.uvs || []).map(([u, v]) => [u, model.flipV === false ? v : 1 - v]);
   let material = getBlockMaterial(texture, undefined, model.translucent === true, false);
@@ -2608,6 +2614,30 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
   // blocks (barriers, light blocks, etc.) have a state collision shape but no
   // visible model elements.
   registerBlockCollision(info);
+  if (isShaderBlock(id)) {
+    const shaderConfig = await getShaderConfigForBlock(id);
+    const overrideMaterial = shaderConfig ? await createMCShaderMaterial(shaderConfig) : null;
+    const material = overrideMaterial || new THREE.MeshBasicMaterial({
+      color: 0x220044, side: THREE.DoubleSide, transparent: false,
+    });
+    const bucket = getBucket(material);
+    const x0 = pos.x + 0.5, y0 = pos.y + 0.5, z0 = pos.z + 0.5;
+    const x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
+    const uvs = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    const faces = [
+      [[x1,y0,z0],[x1,y0,z1],[x1,y1,z1],[x1,y1,z0],[1,0,0]],
+      [[x0,y0,z1],[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[-1,0,0]],
+      [[x0,y1,z1],[x1,y1,z1],[x1,y0,z1],[x0,y0,z1],[0,0,1]],
+      [[x1,y1,z0],[x0,y1,z0],[x0,y0,z0],[x1,y0,z0],[0,0,-1]],
+      [[x0,y1,z0],[x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[0,1,0]],
+      [[x0,y0,z1],[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[0,-1,0]],
+    ];
+    for (const [a,b,c,d,n] of faces) {
+      pushQuad(bucket, new THREE.Vector3(...a), new THREE.Vector3(...b), new THREE.Vector3(...c), new THREE.Vector3(...d),
+        new THREE.Vector3(...n), uvs, `${pos.x},${pos.y},${pos.z}`);
+    }
+    return;
+  }
   if (!entries || entries.length === 0) return;
 
   const blockKey = `${pos.x},${pos.y},${pos.z}`;
@@ -2907,6 +2937,11 @@ async function getBlockModels(blockId, properties, pos, nbt = null) {
     }
     if (data) result.push({ data, x: app.x, y: app.y, uvlock: !!app.uvlock });
   }
+  const shaderId = blockId.replace('minecraft:', '');
+  if (!result.length && blockProperties[shaderId]?.shader === 'end_portal') {
+    const data = await loadModel('block/cube_all');
+    if (data) result.push({ data, x: 0, y: 0, uvlock: false });
+  }
   return result;
 }
 
@@ -3012,7 +3047,7 @@ async function build() {
     physicsBlocks.set(key, id);
     physicsStates.set(key, props);
     if (isFluidBlock(id)) fluidPositions.add(key);
-    if (!SHADER_BLOCK_IDS.has(id) && !isTranslucentBlock(id) && !isCutoutBlock(id) && entriesAreOpaqueCube(modelEntries)) {
+    if (!isShaderBlock(id) && !isTranslucentBlock(id) && !isCutoutBlock(id) && entriesAreOpaqueCube(modelEntries)) {
       opaquePositions.add(key);
     }
   });
