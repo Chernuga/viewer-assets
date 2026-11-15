@@ -1791,21 +1791,40 @@ async function loadColormaps() {
   } catch (err) { console.warn('Colormap load failed', err); }
 }
 
+async function fetchViewerJson(name, options = {}) {
+  const candidates = [
+    new URL(`viewer/${name}`, location.href).href,
+    `${REPO_BASE}/viewer/${name}`,
+  ];
+  for (const url of candidates) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok) return response;
+    } catch (err) {
+      console.warn(`Could not load ${name} from ${url}`, err);
+    }
+  }
+  return null;
+}
+
 async function loadBlockProperties() {
   if (blockPropertiesReady) return;
   try {
-    const res = await fetch(new URL('viewer/block_properties.json', location.href));
-    if (res.ok) blockProperties = await res.json();
-    const beRes = await fetch(new URL('viewer/block_entity_models.json', location.href));
-    if (beRes.ok) blockEntityModels = await beRes.json();
-    const collisionRes = await fetch(new URL('viewer/block_collision_shapes.json', location.href));
-    if (collisionRes.ok) blockCollisionShapes = await collisionRes.json();
-    const statesRes = await fetch(new URL('viewer/block_collision_states.json', location.href), { cache: 'no-store' });
-    if (statesRes.ok) blockCollisionStates = await statesRes.json();
-    const itemsRes = await fetch(new URL('viewer/items.json', location.href));
-    if (itemsRes.ok) creativeItems = await itemsRes.json();
-    const tabsRes = await fetch(new URL('viewer/creative_tabs.json', location.href));
-    if (tabsRes.ok) creativeTabs = (await tabsRes.json()).tabs || [];
+    const res = await fetchViewerJson('block_properties.json');
+    if (res) blockProperties = await res.json();
+    const beRes = await fetchViewerJson('block_entity_models.json');
+    if (beRes) blockEntityModels = await beRes.json();
+    const collisionRes = await fetchViewerJson('block_collision_shapes.json');
+    if (collisionRes) blockCollisionShapes = await collisionRes.json();
+    const statesRes = await fetchViewerJson('block_collision_states.json', { cache: 'no-store' });
+    if (statesRes) blockCollisionStates = await statesRes.json();
+    if (!Object.keys(blockCollisionStates).length) {
+      console.error('Collision state table did not load; block collision and hitboxes are disabled. Open the viewer over HTTP or use the updated local-file fallback.');
+    }
+    const itemsRes = await fetchViewerJson('items.json');
+    if (itemsRes) creativeItems = await itemsRes.json();
+    const tabsRes = await fetchViewerJson('creative_tabs.json');
+    if (tabsRes) creativeTabs = (await tabsRes.json()).tabs || [];
     if (creativeInventoryOpen) { renderCreativeTabs(); renderCreativeInventory(document.getElementById('inventorySearch')?.value || ''); }
     blockPropertiesReady = true;
   } catch (err) {
