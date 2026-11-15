@@ -6025,6 +6025,12 @@ window.addEventListener('keydown', (e) => {
   if (hitboxF3Held && e.code === 'KeyB') {
     e.preventDefault();
     if (!e.repeat) toggleHitboxDebug();
+    return;
+  }
+  const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+  if (!typing && e.code === 'KeyH' && !e.repeat) {
+    e.preventDefault();
+    toggleHitboxDebug();
   }
 });
 window.addEventListener('keyup', (e) => {
