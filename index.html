@@ -2482,7 +2482,7 @@ function pushBlockEntityQuad(quad, texture, model, pos, yaw, part = null, normal
     : null;
   const blockRotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
   const offset = part ? new THREE.Vector3(part.xyz[0] / 16, part.xyz[1] / 16, part.xyz[2] / 16) : new THREE.Vector3();
-  const base = model.origin === 'corner' ? 0.5 : 1;
+  const base = model.origin === 'center' ? 1 : 0.5;
   let n = quad.normal || [0, 1, 0];
   const normal = new THREE.Vector3(n[0], n[1], n[2]);
   if (partRotation) normal.applyQuaternion(partRotation);
