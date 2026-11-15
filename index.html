@@ -2469,6 +2469,34 @@ function blockEntityYaw(transform, properties) {
   return facing + rotation;
 }
 
+function pushBlockEntityQuad(quad, texture, model, pos, yaw, part = null, normalOffset = 0) {
+  const partRotation = part
+    ? new THREE.Quaternion().setFromEuler(new THREE.Euler(part.rot[0], part.rot[1], part.rot[2], 'ZYX'))
+    : null;
+  const blockRotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+  const offset = part ? new THREE.Vector3(part.xyz[0] / 16, part.xyz[1] / 16, part.xyz[2] / 16) : new THREE.Vector3();
+  let n = quad.normal || [0, 1, 0];
+  const normal = new THREE.Vector3(n[0], n[1], n[2]);
+  if (partRotation) normal.applyQuaternion(partRotation);
+  normal.applyQuaternion(blockRotation);
+  const corners = quad.positions.map(([x, y, z]) => {
+    const local = new THREE.Vector3(x / 16, y / 16, z / 16);
+    if (partRotation) local.applyQuaternion(partRotation);
+    local.add(offset);
+    local.applyQuaternion(blockRotation);
+    local.addScaledVector(normal, normalOffset);
+    return new THREE.Vector3(pos.x + 0.5 + local.x, pos.y + 0.5 + local.y, pos.z + 0.5 + local.z);
+  });
+  const uvs = (quad.uvs || []).map(([u, v]) => [u, model.flipV === false ? v : 1 - v]);
+  let material = getBlockMaterial(texture, undefined, model.translucent === true, false);
+  if (model.tint) {
+    material = material.clone();
+    material.color.set(model.tint);
+  }
+  material.side = THREE.DoubleSide;
+  pushQuad(getBucket(material), corners[0], corners[1], corners[2], corners[3], normal, uvs, `${pos.x},${pos.y},${pos.z}`);
+}
+
 function collectBlockEntityGeometry(info) {
   const { id, pos, properties } = info;
   const model = blockEntityModels[id.replace('minecraft:', '')];
@@ -2477,25 +2505,16 @@ function collectBlockEntityGeometry(info) {
   if (!blockEntityRequirementsMet(transform, properties, info.nbt)) return false;
   const yaw = blockEntityYaw(transform, properties);
   const cos = Math.cos(yaw), sin = Math.sin(yaw);
-  for (const quad of model.quads || []) {
-    let material = getBlockMaterial(quad.texture || model.texture, undefined, model.translucent === true, false);
-    if (model.tint) {
-      material = material.clone();
-      material.color.set(model.tint);
+  if (model.parts) {
+    for (const part of model.parts) {
+      for (const quad of part.quads || []) {
+        pushBlockEntityQuad(quad, quad.texture || part.texture || model.texture, model, pos, yaw, part);
+      }
     }
-    material.side = THREE.DoubleSide;
-    const bucket = getBucket(material);
-    const corners = quad.positions.map(([x, y, z]) => {
-      let rx = x / 16 - 0.5, rz = z / 16 - 0.5;
-      const tx = rx * cos - rz * sin;
-      const tz = rx * sin + rz * cos;
-      return new THREE.Vector3(pos.x + 1 + tx, pos.y + 0.5 + y / 16, pos.z + 1 + tz);
-    });
-    let n = quad.normal || [0, 1, 0];
-    const nx = n[0] * cos - n[2] * sin;
-    const nz = n[0] * sin + n[2] * cos;
-    const uvs = (quad.uvs || []).map(([u, v]) => [u, model.flipV === false ? v : 1 - v]);
-    pushQuad(bucket, corners[0], corners[1], corners[2], corners[3], new THREE.Vector3(nx, n[1], nz), uvs, `${pos.x},${pos.y},${pos.z}`);
+  } else {
+    for (const quad of model.quads || []) {
+      pushBlockEntityQuad(quad, quad.texture || model.texture, model, pos, yaw);
+    }
   }
 
   const patternKind = model.patternKind;
@@ -2536,33 +2555,45 @@ function collectBlockEntityGeometry(info) {
   if (patternKind === 'pot') {
     const potSherds = potPatternsFromNbt(info.nbt);
     if (potSherds.length) {
-      const sideQuads = model.patternQuads
-        ? model.patternQuads.map(index => model.quads?.[index]).filter(Boolean)
-        : model.quads.slice(0, 4);
       const patternOffset = model.patternOffset ?? 0.001;
-      potSherds.slice(0, 4).forEach((pattern, side) => {
-        if (!pattern || pattern === 'brick') return;
-        const tex = (model.patternTexture || 'entity/decorated_pot/${pattern}_pottery_pattern')
-          .replace('${pattern}', pattern);
-        const material = getBlockMaterial(tex, undefined, false, false);
-        material.side = THREE.DoubleSide;
-        const bucket = getBucket(material);
-        const quad = sideQuads[side];
-        if (!quad) return;
-        const n = quad.normal;
-        const corners = quad.positions.map(([x, y, z]) => {
-          const rx = x / 16 - 0.5 + n[0] * patternOffset;
-          const rz = z / 16 - 0.5 + n[2] * patternOffset;
-          return new THREE.Vector3(
-            pos.x + 1 + rx,
-            pos.y + 0.5 + y / 16 + n[1] * patternOffset,
-            pos.z + 1 + rz);
+      if (model.parts && model.patternParts) {
+        potSherds.slice(0, 4).forEach((pattern, side) => {
+          if (!pattern || pattern === 'brick') return;
+          const part = model.parts.find(p => p.name === model.patternParts[side]);
+          const quad = part?.quads?.[0];
+          if (!part || !quad) return;
+          const tex = (model.patternTexture || 'entity/decorated_pot/${pattern}_pottery_pattern')
+            .replace('${pattern}', pattern);
+          pushBlockEntityQuad(quad, tex, model, pos, yaw, part, patternOffset);
         });
-        const nx = n[0] * cos - n[2] * sin;
-        const nz = n[0] * sin + n[2] * cos;
-        pushQuad(bucket, corners[0], corners[1], corners[2], corners[3],
-          new THREE.Vector3(nx, n[1], nz), [[0, 0], [1, 0], [1, 1], [0, 1]], `${pos.x},${pos.y},${pos.z}`);
-      });
+      } else {
+        const sideQuads = model.patternQuads
+          ? model.patternQuads.map(index => model.quads?.[index]).filter(Boolean)
+          : model.quads.slice(0, 4);
+        potSherds.slice(0, 4).forEach((pattern, side) => {
+          if (!pattern || pattern === 'brick') return;
+          const tex = (model.patternTexture || 'entity/decorated_pot/${pattern}_pottery_pattern')
+            .replace('${pattern}', pattern);
+          const material = getBlockMaterial(tex, undefined, false, false);
+          material.side = THREE.DoubleSide;
+          const bucket = getBucket(material);
+          const quad = sideQuads[side];
+          if (!quad) return;
+          const n = quad.normal;
+          const corners = quad.positions.map(([x, y, z]) => {
+            const rx = x / 16 - 0.5 + n[0] * patternOffset;
+            const rz = z / 16 - 0.5 + n[2] * patternOffset;
+            return new THREE.Vector3(
+              pos.x + 1 + rx,
+              pos.y + 0.5 + y / 16 + n[1] * patternOffset,
+              pos.z + 1 + rz);
+          });
+          const nx = n[0] * cos - n[2] * sin;
+          const nz = n[0] * sin + n[2] * cos;
+          pushQuad(bucket, corners[0], corners[1], corners[2], corners[3],
+            new THREE.Vector3(nx, n[1], nz), [[0, 0], [1, 0], [1, 1], [0, 1]], `${pos.x},${pos.y},${pos.z}`);
+        });
+      }
     }
   }
   return true;
