@@ -2535,7 +2535,10 @@ function collectBlockEntityGeometry(info) {
   }
   const potSherds = id === 'decorated_pot' ? potPatternsFromNbt(info.nbt) : [];
   if (potSherds.length && model.quads) {
-    const sideQuads = model.quads.slice(0, 4);
+    const sideQuads = model.patternQuads
+      ? model.patternQuads.map(index => model.quads[index]).filter(Boolean)
+      : model.quads.slice(0, 4);
+    const patternOffset = model.patternOffset ?? 0.001;
     potSherds.slice(0, 4).forEach((pattern, side) => {
       if (!pattern || pattern === 'brick') return;
       const tex = `entity/decorated_pot/${pattern}_pottery_pattern`;
@@ -2546,10 +2549,12 @@ function collectBlockEntityGeometry(info) {
       if (!quad) return;
       const n = quad.normal;
       const corners = quad.positions.map(([x, y, z]) => {
-        let rx = x / 16 - 0.5, rz = (z + n[2] * 0.05) / 16 - 0.5;
-        const tx = rx * cos - rz * sin;
-        const tz = rx * sin + rz * cos;
-        return new THREE.Vector3(pos.x + 1 + tx, pos.y + 0.5 + y / 16, pos.z + 1 + tz);
+        const rx = x / 16 - 0.5 + n[0] * patternOffset;
+        const rz = z / 16 - 0.5 + n[2] * patternOffset;
+        return new THREE.Vector3(
+          pos.x + 1 + rx,
+          pos.y + 0.5 + y / 16 + n[1] * patternOffset,
+          pos.z + 1 + rz);
       });
       const nx = n[0] * cos - n[2] * sin;
       const nz = n[0] * sin + n[2] * cos;
