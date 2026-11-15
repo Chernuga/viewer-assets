@@ -2450,18 +2450,39 @@ function potPatternsFromNbt(nbt) {
   return [...list.matchAll(/"([^"]+)"/g)].map(m => m[1].replace('minecraft:', '').replace('_pottery_sherd', ''));
 }
 
+function blockEntityRequirementsMet(transform, properties, nbt) {
+  for (const [key, expected] of Object.entries(transform?.requiresProperties || {})) {
+    if (String(properties?.[key] ?? '') !== String(expected)) return false;
+  }
+  for (const [key, rule] of Object.entries(transform?.requiresNbt || {})) {
+    const match = nbt?.match(new RegExp(`${key}\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`, 'i'));
+    if (!match) return false;
+    const value = Number(match[1]);
+    if (rule.min !== undefined && value < Number(rule.min)) return false;
+    if (rule.max !== undefined && value > Number(rule.max)) return false;
+    if (rule.equals !== undefined && value !== Number(rule.equals)) return false;
+  }
+  return true;
+}
+
+function blockEntityYaw(transform, properties) {
+  const meta = blockEntityModels.__meta || {};
+  const facing = transform?.facingYaw === false
+    ? 0
+    : (meta.facingYaw?.[properties?.facing] || 0);
+  const rotation = transform?.rotationYaw === false || properties?.rotation === undefined
+    ? 0
+    : (Number(properties.rotation) || 0) * (meta.rotationYawScale || Math.PI / 8);
+  return facing + rotation;
+}
+
 function collectBlockEntityGeometry(info) {
   const { id, pos, properties } = info;
   const model = blockEntityModels[id.replace('minecraft:', '')];
   if (!model) return false;
-  if (id === 'lectern' && properties?.has_book !== 'true') return false;
-  if (id === 'beacon') {
-    const levels = info.nbt?.match(/levels\s*:\s*(\d+)/i)?.[1];
-    if (!levels || Number(levels) <= 0) return false;
-  }
-  const yawByFacing = { north: Math.PI, east: -Math.PI / 2, south: 0, west: Math.PI / 2 };
-  let yaw = yawByFacing[properties?.facing] || 0;
-  if (properties?.rotation !== undefined) yaw += (Number(properties.rotation) / 16) * Math.PI * 2;
+  const transform = model.transform || {};
+  if (!blockEntityRequirementsMet(transform, properties, info.nbt)) return false;
+  const yaw = blockEntityYaw(transform, properties);
   const cos = Math.cos(yaw), sin = Math.sin(yaw);
   for (const quad of model.quads || []) {
     let material = getBlockMaterial(quad.texture || model.texture, undefined, model.translucent === true, false);
