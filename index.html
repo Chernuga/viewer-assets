@@ -707,7 +707,8 @@ async function preprocessShader(source, depth = 0, importedSet = null) {
   if (!importedSet) importedSet = new Set();
   const output = [];
   for (const line of source.split('\n')) {
-    const m = line.match(/^\s*#moj_import\s*<([^>]+)>/);
+    if (/^\s*#extension\s+GL_ARB_separate_shader_objects\b/.test(line)) continue;
+    const m = line.match(/^\s*#(?:moj_import|include)\s*<([^>]+)>/);
     if (m) {
       let ref = m[1].replace(/^minecraft:/, '');
       if (importedSet.has(ref)) continue;
