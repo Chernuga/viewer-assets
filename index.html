@@ -3515,6 +3515,10 @@ function physicsTick() {
       player.flying = !player.flying;
       player.flyToggleTimer = 0;
       player.vel.y = 0;
+      if (player.flying) {
+        player.swimming = false;
+        player.height = PLAYER_HEIGHT;
+      }
     }
   } else if (playerInput.jumpEdge && playerInput.jump) {
     playerInput.jumpEdge = false;
@@ -3673,7 +3677,7 @@ function physicsTick() {
   const preMoveVy = player.vel.y;
 
   // Vertical swimming is controlled only by mouse look angle.
-  if (player.swimming) {
+  if (player.swimming && !player.flying) {
     const lookY = Math.sin(player.pitch);
     const response = lookY < -0.2 ? 0.085 : 0.06;
     const aboveIsEmpty = !isWaterAtWorld(player.pos.x, player.pos.y + 0.9, player.pos.z);
