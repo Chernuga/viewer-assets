@@ -3505,7 +3505,9 @@ function physicsTick() {
   const jumpHeld = playerInput.jump;
   const sneakHeld = playerInput.sneak;
 
-  if (playerInput.jumpEdge && playerInput.jump) {
+  const inWaterAtStart = isWaterAtWorld(
+    player.pos.x, player.pos.y + 0.1, player.pos.z);
+  if (playerInput.jumpEdge && playerInput.jump && !inWaterAtStart) {
     playerInput.jumpEdge = false;
     if (player.flyToggleTimer <= 0) {
       player.flyToggleTimer = DOUBLE_TAP_TICKS;
@@ -3514,6 +3516,9 @@ function physicsTick() {
       player.flyToggleTimer = 0;
       player.vel.y = 0;
     }
+  } else if (playerInput.jumpEdge && playerInput.jump) {
+    // Jump is swim-up in water, never the creative-flight double-tap.
+    playerInput.jumpEdge = false;
   }
 
   // Sprint start: hold Ctrl (or Cmd) or double-tap forward. The double-tap
