@@ -3505,9 +3505,7 @@ function physicsTick() {
   const jumpHeld = playerInput.jump;
   const sneakHeld = playerInput.sneak;
 
-  const inWaterAtStart = player.inWater || player.swimming || isWaterAtWorld(
-    player.pos.x, player.pos.y + 0.1, player.pos.z);
-  if (playerInput.jumpEdge && playerInput.jump && !inWaterAtStart) {
+  if (playerInput.jumpEdge && playerInput.jump) {
     playerInput.jumpEdge = false;
     if (player.flyToggleTimer <= 0) {
       player.flyToggleTimer = DOUBLE_TAP_TICKS;
@@ -3515,13 +3513,7 @@ function physicsTick() {
       player.flying = !player.flying;
       player.flyToggleTimer = 0;
       player.vel.y = 0;
-      if (player.flying) {
-        player.swimming = false;
-        player.height = PLAYER_HEIGHT;
-      }
     }
-  } else if (playerInput.jumpEdge && playerInput.jump) {
-    playerInput.jumpEdge = false;
   }
 
   // Sprint start: hold Ctrl (or Cmd) or double-tap forward. The double-tap
@@ -3584,9 +3576,7 @@ function physicsTick() {
   // shrink the hitbox and camera.
   const headInWater = isWaterAtWorld(
     player.pos.x, player.pos.y + player.eyeHeight, player.pos.z);
-  const deepWater = isWaterAtWorld(player.pos.x, player.pos.y + 0.1, player.pos.z) &&
-    isWaterAtWorld(player.pos.x, player.pos.y + 1.1, player.pos.z);
-  const wantSwimming = inWater && deepWater && !player.flying && player.sprinting && headInWater;
+  const wantSwimming = inWater && !player.flying && player.sprinting && headInWater;
   if (wantSwimming) {
     player.swimming = true;
     player.height = PLAYER_SWIM_HEIGHT;
@@ -3676,19 +3666,9 @@ function physicsTick() {
   const wasOnGround = player.onGround;
   const preMoveVy = player.vel.y;
 
-  // Vertical swimming is controlled by mouse look, with Space as an
-  // additional swim-up impulse.
   if (inWater && !player.flying) {
     if (jumpHeld) player.vel.y += 0.04;
     if (sneakHeld) player.vel.y -= 0.04;
-  }
-  if (player.swimming && !player.flying) {
-    const lookY = Math.sin(player.pitch);
-    const response = lookY < -0.2 ? 0.085 : 0.06;
-    const aboveIsEmpty = !isWaterAtWorld(player.pos.x, player.pos.y + 0.9, player.pos.z);
-    if (!(lookY > 0 && !jumpHeld && aboveIsEmpty)) {
-      player.vel.y += (lookY - player.vel.y) * response;
-    }
   }
 
   movePlayer();
