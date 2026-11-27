@@ -3699,9 +3699,13 @@ function physicsTick() {
     player.vel.y *= 0.8;
     if (!player.sprinting && player.vel.y <= 0) player.vel.y -= GRAVITY / 16;
   } else if (inLava) {
-    // Lava has the same jump-in-liquid impulse but much stronger drag.
-    player.vel.y *= 0.5;
-    if (player.vel.y <= 0) player.vel.y -= GRAVITY / 32;
+    // LivingEntity.travelInLava: shallow lava uses a different vertical drag,
+    // then fluid-fall adjustment and lava gravity.
+    const shallowLava = !isLavaAtWorld(
+      player.pos.x, player.pos.y + 1.1, player.pos.z);
+    player.vel.y *= shallowLava ? 0.8 : 0.5;
+    if (!player.sprinting && player.vel.y <= 0) player.vel.y -= GRAVITY / 16;
+    player.vel.y -= GRAVITY / 4;
   } else {
     player.vel.y = (player.vel.y - GRAVITY) * 0.98;
   }
