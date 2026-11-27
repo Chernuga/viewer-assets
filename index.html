@@ -1965,9 +1965,9 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
     transparent: !!translucent,
     alphaTest: translucent ? 0.0 : 0.5,
     side: flat ? THREE.DoubleSide : THREE.FrontSide,
-    // Solid translucent cubes (honey, slime, ice, glass) must write depth so
-    // their shell hides the inset detail cube instead of double-blending it.
-    depthWrite: translucent ? solidTranslucent : true,
+    // Glass and ice need depth writes; honey/slime intentionally blend their
+    // inset cube through the translucent shell.
+    depthWrite: translucent ? /glass|ice/.test(texPath) : true,
   });
   if (/(^|\/)water_(still|flow)$/.test(texPath)) mat.opacity = 0.72;
   if (tintIndex !== undefined) mat.color = getTintColor(tintIndex);
