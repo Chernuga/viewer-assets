@@ -3575,9 +3575,11 @@ function physicsTick() {
   // or when the head is submerged. Merely standing in shallow water must not
   // shrink the hitbox and camera.
   const headInWater = isWaterAtWorld(
-    player.pos.x, player.pos.y + player.eyeHeight, player.pos.z);
+    player.pos.x,
+    player.pos.y + (player.swimming ? EYE_HEIGHT_SWIM : player.eyeHeight),
+    player.pos.z);
   const wantSwimming = inWater && !player.flying && player.sprinting && headInWater;
-  if (wantSwimming) {
+  if (wantSwimming && !playerCollidesAt(player.pos.x, player.pos.y, player.pos.z, PLAYER_SWIM_HEIGHT)) {
     player.swimming = true;
     player.height = PLAYER_SWIM_HEIGHT;
     player.sneaking = false;
@@ -3681,6 +3683,11 @@ function physicsTick() {
     // non-sprinting entity gets the 1/16-gravity adjustment.
     player.vel.y *= 0.8;
     if (!player.sprinting && player.vel.y <= 0) player.vel.y -= GRAVITY / 16;
+    // LivingEntity.jumpOutOfFluid: allow climbing out at a water edge.
+    if (player.collidedHorizontally &&
+        !playerCollidesAt(player.pos.x, player.pos.y + 0.6, player.pos.z, player.height)) {
+      player.vel.y = 0.3;
+    }
   } else if (inLava) {
     player.vel.y -= 0.02;
     if (jumpHeld) player.vel.y += 0.02;
