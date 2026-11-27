@@ -3649,7 +3649,7 @@ function physicsTick() {
   if (player.flying) {
     if (jumpHeld) player.vel.y += FLY_VERTICAL_ACCEL;
     if (sneakHeld) player.vel.y -= FLY_VERTICAL_ACCEL;
-  } else if ((!inWater || !player.swimming) && jumpHeld && player.onGround && player.jumpCooldown === 0) {
+  } else if (!inWater && jumpHeld && player.onGround && player.jumpCooldown === 0) {
     player.vel.y = JUMP_VELOCITY * (supportProps?.jump ?? 1);
     if (player.sprinting) {
       player.vel.x += -Math.sin(player.yaw) * SPRINT_JUMP_BOOST;
