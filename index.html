@@ -3600,6 +3600,12 @@ function physicsTick() {
     player.flying = false;
     player.vel.y = 0;
   }
+  // In the viewer, forward input in water is treated as the swim intent.
+  // Java still gates the pose on sprinting; this makes that gate reachable
+  // without requiring the browser's Ctrl shortcut while pointer-locked.
+  if (inWater && !player.flying && playerInput.forward && !player.sneaking) {
+    player.sprinting = true;
+  }
   const speedCandidates = [supportProps, ...bodyPropsList]
     .filter(p => p && p.class !== 'AirBlock')
     .map(p => p.speed);
