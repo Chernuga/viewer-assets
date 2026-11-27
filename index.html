@@ -3674,7 +3674,9 @@ function physicsTick() {
   }
 
   // Player.travel swimming override: look pitch controls vertical swimming.
-  if (player.swimming) {
+  // Apply it while in water so looking down can submerge the head and enter
+  // the swimming pose; once swimming, the same response maintains the pitch.
+  if (inWater && !player.flying) {
     const lookY = Math.sin(player.pitch);
     const verticalResponse = lookY < -0.2 ? 0.085 : 0.06;
     const aboveIsEmpty = !isWaterAtWorld(player.pos.x, player.pos.y + 0.9, player.pos.z);
@@ -6290,24 +6292,26 @@ window.__testMove = (x, y, z, dx, dz, vy = 0) => {
   movePlayer();
   return { x: player.pos.x, y: player.pos.y, z: player.pos.z, colliding: playerCollidesAt(player.pos.x, player.pos.y, player.pos.z) };
 };
-window.__waterTest = (x, y, z, held) => {
+window.__waterTest = (x, y, z, held, forward = false, sprint = false, ticks = 40) => {
   player.pos.set(x, y, z);
   player.prevPos.copy(player.pos);
   player.vel.set(0, 0, 0);
   player.flying = false;
   player.onGround = false;
-  player.climbing = false;
   player.jumpCooldown = 0;
-  playerInput.forward = false;
+  playerInput.forward = forward;
   playerInput.jump = held;
   playerInput.sneak = false;
-  playerInput.sprint = false;
-  for (let i = 0; i < 40; i++) physicsTick();
+  playerInput.sprint = sprint;
+  for (let i = 0; i < ticks; i++) physicsTick();
   playerInput.forward = false;
   playerInput.jump = false;
+  playerInput.sprint = false;
   return {
     x: player.pos.x, y: player.pos.y, z: player.pos.z,
-    inWater: player.inWater, swimming: player.swimming,
+    inWater: player.inWater, swimming: player.swimming, sprinting: player.sprinting,
+    headWater: isWaterAtWorld(player.pos.x, player.pos.y + player.eyeHeight, player.pos.z),
+    headY: player.pos.y + player.eyeHeight,
     height: player.height, eyeHeight: player.eyeHeight,
     vel: [player.vel.x, player.vel.y, player.vel.z],
   };
