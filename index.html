@@ -3571,9 +3571,12 @@ function physicsTick() {
   const inHoney = bodyPropsList.some(p => p.class === 'HoneyBlock');
   const climbable = bodyPropsList.some(p => p.climbable || p.class === 'ScaffoldingBlock');
 
-  // Java switches to the 0.6-block swimming pose when the player is in water.
-  // Restore the standing pose only when there is room for the full hitbox.
-  const wantSwimming = inWater && !player.flying;
+  // Java only uses the swimming pose when swimming is actually requested,
+  // or when the head is submerged. Merely standing in shallow water must not
+  // shrink the hitbox and camera.
+  const headInWater = isWaterAtWorld(
+    player.pos.x, player.pos.y + Math.max(0.35, player.height - 0.05), player.pos.z);
+  const wantSwimming = inWater && !player.flying && (player.sprinting || headInWater);
   if (wantSwimming) {
     player.swimming = true;
     player.height = PLAYER_SWIM_HEIGHT;
@@ -3646,7 +3649,7 @@ function physicsTick() {
   if (player.flying) {
     if (jumpHeld) player.vel.y += FLY_VERTICAL_ACCEL;
     if (sneakHeld) player.vel.y -= FLY_VERTICAL_ACCEL;
-  } else if (!inWater && jumpHeld && player.onGround && player.jumpCooldown === 0) {
+  } else if ((!inWater || !player.swimming) && jumpHeld && player.onGround && player.jumpCooldown === 0) {
     player.vel.y = JUMP_VELOCITY * (supportProps?.jump ?? 1);
     if (player.sprinting) {
       player.vel.x += -Math.sin(player.yaw) * SPRINT_JUMP_BOOST;
@@ -3767,6 +3770,7 @@ function updatePlayer(delta) {
       playerAvatar.rotation.x = 0;
     }
     playerAvatar.position.copy(_camPos);
+    if (player.swimming) playerAvatar.position.y += 0.3;
     playerAvatar.rotation.y = player.yaw + Math.PI;
     playerAvatar.visible = thirdPersonView !== 0 && cameraMode === 'creative';
   }
