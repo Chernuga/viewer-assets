@@ -54,6 +54,7 @@
     }
     body.play #webgl-canvas { cursor:crosshair; }
     .error-overlay { position:absolute; top:10px; right:10px; max-width:400px; max-height:300px; overflow:auto; background:rgba(255,0,0,0.1); border:1px solid rgba(255,0,0,0.3); border-radius:8px; padding:8px; font-size:12px; color:#ff9999; display:none; z-index:20; white-space:pre-wrap; word-break:break-all; }
+    #environmentTint { position:fixed; inset:0; pointer-events:none; z-index:3; opacity:0; transition:opacity 0.18s linear, background-color 0.18s linear; }
     .creative-bar { position:absolute; left:50%; bottom:0; transform:translateX(-50%); width:364px; height:44px; padding:0; border:0; background-image:url('minecraft/textures/gui/sprites/hud/hotbar.png'); background-size:364px 44px; background-repeat:no-repeat; image-rendering:pixelated; z-index:14; pointer-events:none; }
     .creative-slot { position:absolute; width:40px; height:40px; padding:0; border:0; background:transparent; cursor:pointer; overflow:visible; pointer-events:auto; }
     .creative-slot img { position:absolute; left:var(--hotbar-icon-inset,4px); top:var(--hotbar-icon-inset,4px); width:var(--hotbar-icon,32px); height:var(--hotbar-icon,32px); object-fit:contain; image-rendering:pixelated; pointer-events:none; }
@@ -156,6 +157,7 @@
       </div>
     </div>
     <div class="hud" id="hud"></div>
+    <div id="environmentTint"></div>
     <div id="errorOverlay" class="error-overlay"></div>
   </div>
 </div>
@@ -3130,6 +3132,7 @@ const player = {
   swimming: false,
   inWater: false,
   inLava: false,
+  inPowder: false,
   jumpCooldown: 0,
   flyToggleTimer: 0,
   sprintToggleTimer: 0,
@@ -3475,6 +3478,7 @@ function respawnPlayer() {
   player.swimming = false;
   player.inWater = false;
   player.inLava = false;
+  player.inPowder = false;
   player.height = PLAYER_HEIGHT;
   player.eyeHeight = EYE_HEIGHT;
   player.flying = CONFIG.player?.startFlying !== false;
@@ -3591,6 +3595,7 @@ function physicsTick() {
   }
   player.inWater = inWater;
   player.inLava = inLava;
+  player.inPowder = inPowder;
   const speedCandidates = [supportProps, ...bodyPropsList]
     .filter(p => p && p.class !== 'AirBlock')
     .map(p => p.speed);
@@ -3929,6 +3934,7 @@ function setCameraMode(mode, requestLock = true) {
     player.swimming = false;
     player.inWater = false;
     player.inLava = false;
+    player.inPowder = false;
     player.height = PLAYER_HEIGHT;
     player.eyeHeight = EYE_HEIGHT;
     player.flying = CONFIG.player?.startFlying !== false;
@@ -5617,6 +5623,54 @@ function updateLighting() {
   );
 }
 
+function updateEnvironmentEffects() {
+  const eyeY = player.pos.y + player.eyeHeight;
+  const eyeX = player.pos.x;
+  const eyeZ = player.pos.z;
+  const eyeBlock = blockIdAtWorld(eyeX, eyeY, eyeZ)?.replace('minecraft:', '');
+  let mode = 'none';
+  if (isLavaAtWorld(eyeX, eyeY, eyeZ)) mode = 'lava';
+  else if (isWaterAtWorld(eyeX, eyeY, eyeZ)) mode = 'water';
+  else if (eyeBlock === 'powder_snow') mode = 'powder';
+
+  const presets = {
+    none:   { fog: null, color: 0x000000, near: 0, far: 10000, tint: 'rgba(0,0,0,0)', opacity: 0 },
+    water:  { fog: 0x0b2f5c, color: 0x0b2f5c, near: 0.1, far: 18, tint: 'rgba(16,64,145,0.34)', opacity: 1 },
+    lava:   { fog: 0x591600, color: 0x591600, near: 0.1, far: 2.6, tint: 'rgba(210,60,0,0.58)', opacity: 1 },
+    powder: { fog: 0xdfefff, color: 0xdfefff, near: 0.1, far: 4, tint: 'rgba(225,240,255,0.42)', opacity: 1 },
+  };
+  const preset = presets[mode];
+
+  if (!preset.fog) {
+    scene.fog = null;
+  } else {
+    if (!scene.fog) scene.fog = new THREE.Fog(preset.fog, preset.near, preset.far);
+    scene.fog.color.setHex(preset.fog);
+    scene.fog.near = preset.near;
+    scene.fog.far = preset.far;
+  }
+
+  const tint = document.getElementById('environmentTint');
+  if (tint) {
+    tint.style.backgroundColor = preset.tint;
+    tint.style.opacity = String(preset.opacity);
+  }
+
+  // Keep the custom Minecraft shaders' fog uniforms in sync as well.
+  const seen = new Set();
+  for (const mat of [...blockMaterialCache.values(), ...shaderMaterialCache.values()]) {
+    if (!mat || seen.has(mat) || !mat.uniforms) continue;
+    seen.add(mat);
+    const u = mat.uniforms;
+    if (u.FogColor) u.FogColor.value.set(
+      ((preset.color >> 16) & 255) / 255,
+      ((preset.color >> 8) & 255) / 255,
+      (preset.color & 255) / 255, 1);
+    if (u.FogEnvironmentalStart) u.FogEnvironmentalStart.value = preset.near;
+    if (u.FogEnvironmentalEnd) u.FogEnvironmentalEnd.value = preset.far;
+  }
+}
+
 function animate() {
   requestAnimationFrame(animate);
   ensureViewport();
@@ -5635,6 +5689,7 @@ function animate() {
   }
   if (cameraMode === 'creative') updatePlayer(delta);
   else controls.update();
+  updateEnvironmentEffects();
   updatePlayerHitbox();
   updateSky(delta);
   updateCelestialBodies(delta);
