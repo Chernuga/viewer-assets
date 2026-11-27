@@ -1970,6 +1970,8 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
     depthWrite: translucent ? /glass|ice/.test(texPath) : true,
   });
   if (/(^|\/)water_(still|flow)$/.test(texPath)) mat.opacity = 0.72;
+  if (/honey_block/.test(texPath)) mat.opacity = 0.58;
+  if (/slime_block/.test(texPath)) mat.opacity = 0.72;
   if (tintIndex !== undefined) mat.color = getTintColor(tintIndex);
 
   const reflectionStrength = getReflectionStrength(texPath);
