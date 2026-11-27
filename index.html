@@ -3689,7 +3689,9 @@ function physicsTick() {
   const preMoveVy = player.vel.y;
 
   if (inWater && !player.flying) {
-    if (jumpHeld) player.vel.y += 0.04;
+    // Looking down overrides the swim-up impulse; otherwise holding Space
+    // keeps the head above water and the swim pose can never start.
+    if (jumpHeld && Math.sin(player.pitch) > -0.1) player.vel.y += 0.04;
     if (sneakHeld) player.vel.y -= 0.04;
   }
 
@@ -6317,7 +6319,7 @@ window.__testMove = (x, y, z, dx, dz, vy = 0) => {
   movePlayer();
   return { x: player.pos.x, y: player.pos.y, z: player.pos.z, colliding: playerCollidesAt(player.pos.x, player.pos.y, player.pos.z) };
 };
-window.__waterTrace = (x, y, z, pitch = 0, ticks = 30) => {
+window.__waterTrace = (x, y, z, pitch = 0, ticks = 30, jump = false) => {
   player.pos.set(x, y, z);
   player.prevPos.copy(player.pos);
   player.vel.set(0, 0, 0);
@@ -6328,7 +6330,7 @@ window.__waterTrace = (x, y, z, pitch = 0, ticks = 30) => {
   player.jumpCooldown = 0;
   playerInput.forward = true;
   playerInput.sprint = true;
-  playerInput.jump = false;
+  playerInput.jump = jump;
   playerInput.sneak = false;
   const trace = [];
   for (let i = 0; i < ticks; i++) {
