@@ -3148,6 +3148,8 @@ let mobileFullscreen = false;
 
 let cameraMode = 'creative';
 let pointerLocked = false;
+let ignoreFirstMouseMove = false;
+const MAX_MOUSE_STEP = 120;
 let keyboardLockActive = false;
 let physicsAccumulator = 0;
 let hudRefreshTimer = 0;
@@ -5183,18 +5185,28 @@ window.addEventListener('blur', () => clearPlayerInput());
 
 document.addEventListener('mousemove', (e) => {
   if (!pointerLocked || cameraMode !== 'creative') return;
+  if (ignoreFirstMouseMove) {
+    ignoreFirstMouseMove = false;
+    if (Math.abs(e.movementX) + Math.abs(e.movementY) > 20) return;
+  }
+  // Pointer lock can emit a huge synthetic delta on entry/re-entry. Clamp it
+  // so the camera cannot snap across the world.
+  const movementX = Math.max(-MAX_MOUSE_STEP, Math.min(MAX_MOUSE_STEP, e.movementX || 0));
+  const movementY = Math.max(-MAX_MOUSE_STEP, Math.min(MAX_MOUSE_STEP, e.movementY || 0));
   const sensitivity = CONFIG.player?.mouseSensitivity ?? 0.5;
   const f = sensitivity * 0.6 + 0.2;
   const degreesPerPixel = f * f * f * 8 * 0.15;
-  player.yaw -= THREE.MathUtils.degToRad(e.movementX * degreesPerPixel);
-  player.pitch -= THREE.MathUtils.degToRad(e.movementY * degreesPerPixel);
+  player.yaw -= THREE.MathUtils.degToRad(movementX * degreesPerPixel);
+  player.pitch -= THREE.MathUtils.degToRad(movementY * degreesPerPixel);
   const limit = Math.PI / 2 - 0.001;
   player.pitch = Math.max(-limit, Math.min(limit, player.pitch));
 });
 
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === canvas;
-  if (!pointerLocked) {
+  if (pointerLocked) {
+    ignoreFirstMouseMove = true;
+  } else {
     clearPlayerInput();
     disableKeyboardLock();
   }
