@@ -1959,18 +1959,21 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
   if (mat) return mat;
 
   const texture = getTexture(texPath);
+  const solidTranslucent = /glass|honey_block|slime_block|ice/.test(texPath);
   mat = new THREE.MeshLambertMaterial({
     map: texture,
     transparent: !!translucent,
     alphaTest: translucent ? 0.0 : 0.5,
     side: flat ? THREE.DoubleSide : THREE.FrontSide,
-    depthWrite: !translucent,
+    // Solid translucent cubes (honey, slime, ice, glass) must write depth so
+    // their shell hides the inset detail cube instead of double-blending it.
+    depthWrite: translucent ? solidTranslucent : true,
   });
   if (/(^|\/)water_(still|flow)$/.test(texPath)) mat.opacity = 0.72;
   if (tintIndex !== undefined) mat.color = getTintColor(tintIndex);
 
   const reflectionStrength = getReflectionStrength(texPath);
-  if (texture !== magentaTex) {
+  if (texture !== magentaTex && !solidTranslucent) {
     // Translucent faces reflect across the whole side; cutout/opaque faces use
     // the albedo alpha as the per-pixel reflectivity map.
     const mask = translucent ? fullReflectionMask : (texture.userData?.reflectionMask || fullReflectionMask);
@@ -1984,7 +1987,7 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
 
   // Every block surface, including cutouts and translucent glass/ice, gets the
   // same procedural relief from its per-frame height atlas.
-  const allowHeightRelief = true;
+  const allowHeightRelief = !solidTranslucent;
   if (texture !== magentaTex) {
     patchHeightMaterial(mat, allowHeightRelief);
     attachSurfaceMaps(mat, texPath, allowHeightRelief);
