@@ -3505,7 +3505,9 @@ function physicsTick() {
   const jumpHeld = playerInput.jump;
   const sneakHeld = playerInput.sneak;
 
-  if (playerInput.jumpEdge && playerInput.jump) {
+  const inWaterAtStart = player.inWater || player.swimming || isWaterAtWorld(
+    player.pos.x, player.pos.y + 0.1, player.pos.z);
+  if (playerInput.jumpEdge && playerInput.jump && !inWaterAtStart) {
     playerInput.jumpEdge = false;
     if (player.flyToggleTimer <= 0) {
       player.flyToggleTimer = DOUBLE_TAP_TICKS;
@@ -3514,6 +3516,9 @@ function physicsTick() {
       player.flyToggleTimer = 0;
       player.vel.y = 0;
     }
+  } else if (playerInput.jumpEdge && playerInput.jump) {
+    // Water Space is swim-up, not creative-flight double-tap.
+    playerInput.jumpEdge = false;
   }
 
   // Sprint start: hold Ctrl (or Cmd) or double-tap forward. The double-tap
@@ -3671,6 +3676,16 @@ function physicsTick() {
   if (inWater && !player.flying) {
     if (jumpHeld) player.vel.y += 0.04;
     if (sneakHeld) player.vel.y -= 0.04;
+  }
+
+  // While swimming, look pitch also drives vertical velocity.
+  if (player.swimming) {
+    const lookY = Math.sin(player.pitch);
+    const response = lookY < -0.2 ? 0.085 : 0.06;
+    const aboveIsEmpty = !isWaterAtWorld(player.pos.x, player.pos.y + 0.9, player.pos.z);
+    if (!(lookY > 0 && !jumpHeld && aboveIsEmpty)) {
+      player.vel.y += (lookY - player.vel.y) * response;
+    }
   }
 
   movePlayer();
