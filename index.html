@@ -3505,9 +3505,7 @@ function physicsTick() {
   const jumpHeld = playerInput.jump;
   const sneakHeld = playerInput.sneak;
 
-  const inWaterAtStart = isWaterAtWorld(
-    player.pos.x, player.pos.y + 0.1, player.pos.z);
-  if (playerInput.jumpEdge && playerInput.jump && !inWaterAtStart) {
+  if (playerInput.jumpEdge && playerInput.jump) {
     playerInput.jumpEdge = false;
     if (player.flyToggleTimer <= 0) {
       player.flyToggleTimer = DOUBLE_TAP_TICKS;
@@ -3516,9 +3514,6 @@ function physicsTick() {
       player.flyToggleTimer = 0;
       player.vel.y = 0;
     }
-  } else if (playerInput.jumpEdge && playerInput.jump) {
-    // Jump is swim-up in water, never the creative-flight double-tap.
-    playerInput.jumpEdge = false;
   }
 
   // Sprint start: hold Ctrl (or Cmd) or double-tap forward. The double-tap
@@ -3580,41 +3575,20 @@ function physicsTick() {
   // or when the head is submerged. Merely standing in shallow water must not
   // shrink the hitbox and camera.
   const headInWater = isWaterAtWorld(
-    player.pos.x,
-    player.pos.y + (player.swimming ? EYE_HEIGHT_SWIM : player.eyeHeight),
-    player.pos.z);
-  // Java updateSwimming has hysteresis: a swimmer keeps the pose while still
-  // sprinting in water, even after the head breaks the surface. Starting the
-  // pose still requires the head to be underwater.
-  const wantSwimming = !player.flying && player.sprinting && inWater &&
-    (player.swimming || headInWater);
-  if (wantSwimming && !playerCollidesAt(player.pos.x, player.pos.y, player.pos.z, PLAYER_SWIM_HEIGHT)) {
+    player.pos.x, player.pos.y + player.eyeHeight, player.pos.z);
+  const wantSwimming = inWater && !player.flying && player.sprinting && headInWater;
+  if (wantSwimming) {
     player.swimming = true;
     player.height = PLAYER_SWIM_HEIGHT;
     player.sneaking = false;
   } else if (player.swimming) {
-    // Leaving water must always release the swim pose, even when the
-    // standing hitbox overlaps the bank/edge for one tick.
-    const canStand = !playerCollidesAt(player.pos.x, player.pos.y, player.pos.z, PLAYER_HEIGHT);
-    if (!inWater || canStand) {
+    if (!playerCollidesAt(player.pos.x, player.pos.y, player.pos.z, PLAYER_HEIGHT)) {
       player.swimming = false;
       player.height = PLAYER_HEIGHT;
-      if (!canStand) unstuckPlayer();
     }
   }
   player.inWater = inWater;
   player.inLava = inLava;
-  if (inWater && player.flying) {
-    // Entering water exits creative flight so the swim state is reachable.
-    player.flying = false;
-    player.vel.y = 0;
-  }
-  // In the viewer, forward input in water is treated as the swim intent.
-  // Java still gates the pose on sprinting; this makes that gate reachable
-  // without requiring the browser's Ctrl shortcut while pointer-locked.
-  if (inWater && !player.flying && playerInput.forward && !player.sneaking) {
-    player.sprinting = true;
-  }
   const speedCandidates = [supportProps, ...bodyPropsList]
     .filter(p => p && p.class !== 'AirBlock')
     .map(p => p.speed);
@@ -3675,7 +3649,7 @@ function physicsTick() {
   if (player.flying) {
     if (jumpHeld) player.vel.y += FLY_VERTICAL_ACCEL;
     if (sneakHeld) player.vel.y -= FLY_VERTICAL_ACCEL;
-  } else if (!inWater && jumpHeld && player.onGround && player.jumpCooldown === 0) {
+  } else if ((!inWater || !player.swimming) && jumpHeld && player.onGround && player.jumpCooldown === 0) {
     player.vel.y = JUMP_VELOCITY * (supportProps?.jump ?? 1);
     if (player.sprinting) {
       player.vel.x += -Math.sin(player.yaw) * SPRINT_JUMP_BOOST;
@@ -3693,22 +3667,8 @@ function physicsTick() {
   const preMoveVy = player.vel.y;
 
   if (inWater && !player.flying) {
-    // Looking down overrides the swim-up impulse; otherwise holding Space
-    // keeps the head above water and the swim pose can never start.
-    if (jumpHeld && Math.sin(player.pitch) > -0.1) player.vel.y += 0.04;
+    if (jumpHeld) player.vel.y += 0.04;
     if (sneakHeld) player.vel.y -= 0.04;
-  }
-
-  // Player.travel swimming override: look pitch controls vertical swimming.
-  // Apply it while in water so looking down can submerge the head and enter
-  // the swimming pose; once swimming, the same response maintains the pitch.
-  if (inWater && !player.flying) {
-    const lookY = Math.sin(player.pitch);
-    const verticalResponse = lookY < -0.2 ? 0.085 : 0.06;
-    const aboveIsEmpty = !isWaterAtWorld(player.pos.x, player.pos.y + 0.9, player.pos.z);
-    if (!(lookY > 0 && !jumpHeld && aboveIsEmpty)) {
-      player.vel.y += (lookY - player.vel.y) * verticalResponse;
-    }
   }
 
   movePlayer();
@@ -3721,11 +3681,6 @@ function physicsTick() {
     // non-sprinting entity gets the 1/16-gravity adjustment.
     player.vel.y *= 0.8;
     if (!player.sprinting && player.vel.y <= 0) player.vel.y -= GRAVITY / 16;
-    // LivingEntity.jumpOutOfFluid: allow climbing out at a water edge.
-    if (player.collidedHorizontally &&
-        !playerCollidesAt(player.pos.x, player.pos.y + 0.6, player.pos.z, player.height)) {
-      player.vel.y = 0.3;
-    }
   } else if (inLava) {
     player.vel.y -= 0.02;
     if (jumpHeld) player.vel.y += 0.02;
@@ -3799,11 +3754,7 @@ function updatePlayer(delta) {
   const alpha = Math.min(1, physicsAccumulator / TICK_SECONDS);
   // Smooth the crouch transition at render rate; doing it per tick made the
   // camera drop in visible 20 Hz steps.
-  const swimHeadAboveWater = player.swimming &&
-    !isWaterAtWorld(player.pos.x, player.pos.y + EYE_HEIGHT, player.pos.z) &&
-    !isWaterAtWorld(player.pos.x, player.pos.y + EYE_HEIGHT_SWIM, player.pos.z);
-  const targetEye = player.swimming
-    ? (swimHeadAboveWater ? EYE_HEIGHT : EYE_HEIGHT_SWIM)
+  const targetEye = player.swimming ? EYE_HEIGHT_SWIM
     : player.sneaking ? EYE_HEIGHT_SNEAK : EYE_HEIGHT;
   player.eyeHeight += (targetEye - player.eyeHeight) * (1 - Math.exp(-EYE_SMOOTH_RATE * delta));
   _camPos.lerpVectors(player.prevPos, player.pos, alpha);
@@ -5095,7 +5046,6 @@ function updateHud() {
   }
   const state = player.flying ? 'Flying'
     : player.swimming ? 'Swimming'
-    : player.inWater ? (player.sprinting ? 'In Water' : 'In Water — hold Sprint')
     : (player.sneaking ? 'Sneaking'
     : (player.sprinting ? 'Sprinting' : (player.onGround ? 'Walking' : 'Falling')));
   const pos = `${player.pos.x.toFixed(2)} / ${player.pos.y.toFixed(2)} / ${player.pos.z.toFixed(2)}`;
@@ -6320,36 +6270,35 @@ window.__testMove = (x, y, z, dx, dz, vy = 0) => {
   player.vel.set(dx, vy, dz);
   player.onGround = vy === 0;
   player.flying = false;
+  if (inWater && !player.flying) {
+    if (jumpHeld) player.vel.y += 0.04;
+    if (sneakHeld) player.vel.y -= 0.04;
+  }
+
   movePlayer();
   return { x: player.pos.x, y: player.pos.y, z: player.pos.z, colliding: playerCollidesAt(player.pos.x, player.pos.y, player.pos.z) };
 };
-window.__waterTrace = (x, y, z, pitch = 0, ticks = 30, jump = false) => {
+window.__waterTest = (x, y, z, held) => {
   player.pos.set(x, y, z);
   player.prevPos.copy(player.pos);
   player.vel.set(0, 0, 0);
-  player.pitch = pitch;
-  player.yaw = 0;
   player.flying = false;
   player.onGround = false;
+  player.climbing = false;
   player.jumpCooldown = 0;
-  playerInput.forward = true;
-  playerInput.sprint = true;
-  playerInput.jump = jump;
-  playerInput.sneak = false;
-  const trace = [];
-  for (let i = 0; i < ticks; i++) {
-    physicsTick();
-    trace.push({
-      i, y: +player.pos.y.toFixed(3), vy: +player.vel.y.toFixed(3),
-      inWater: player.inWater, swimming: player.swimming,
-      height: player.height, eye: player.eyeHeight,
-      headWater: isWaterAtWorld(player.pos.x, player.pos.y + (player.swimming ? EYE_HEIGHT_SWIM : player.eyeHeight), player.pos.z),
-      sprinting: player.sprinting,
-    });
-  }
   playerInput.forward = false;
+  playerInput.jump = held;
+  playerInput.sneak = false;
   playerInput.sprint = false;
-  return trace;
+  for (let i = 0; i < 40; i++) physicsTick();
+  playerInput.forward = false;
+  playerInput.jump = false;
+  return {
+    x: player.pos.x, y: player.pos.y, z: player.pos.z,
+    inWater: player.inWater, swimming: player.swimming,
+    height: player.height, eyeHeight: player.eyeHeight,
+    vel: [player.vel.x, player.vel.y, player.vel.z],
+  };
 };
 
 window.__sceneBounds = () => {
