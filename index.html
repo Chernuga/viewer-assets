@@ -3561,7 +3561,7 @@ function physicsTick() {
   const inPowder = bodyPropsList.some(p => p.class === 'PowderSnowBlock');
   const inBerry = bodyPropsList.some(p => p.class === 'SweetBerryBushBlock');
   const inHoney = bodyPropsList.some(p => p.class === 'HoneyBlock');
-  const climbable = bodyPropsList.some(p => p.climbable);
+  const climbable = bodyPropsList.some(p => p.climbable || p.class === 'ScaffoldingBlock');
 
   // Java switches to the 0.6-block swimming pose when the player is in water.
   // Restore the standing pose only when there is room for the full hitbox.
@@ -3862,6 +3862,9 @@ function setCameraMode(mode, requestLock = true) {
     player.vel.set(0, 0, 0);
     player.onGround = false;
     player.sneaking = false;
+    player.swimming = false;
+    player.inWater = false;
+    player.inLava = false;
     player.height = PLAYER_HEIGHT;
     player.eyeHeight = EYE_HEIGHT;
     player.flying = CONFIG.player?.startFlying !== false;
@@ -4912,7 +4915,10 @@ function updateHud() {
     hud.textContent = 'Orbit camera';
     return;
   }
-  const state = player.flying ? 'Flying' : (player.sneaking ? 'Sneaking' : (player.sprinting ? 'Sprinting' : (player.onGround ? 'Walking' : 'Falling')));
+  const state = player.flying ? 'Flying'
+    : player.swimming ? 'Swimming'
+    : (player.sneaking ? 'Sneaking'
+    : (player.sprinting ? 'Sprinting' : (player.onGround ? 'Walking' : 'Falling')));
   const pos = `${player.pos.x.toFixed(2)} / ${player.pos.y.toFixed(2)} / ${player.pos.z.toFixed(2)}`;
   hud.textContent = `Creative — ${state} — XYZ ${pos}`;
 }
