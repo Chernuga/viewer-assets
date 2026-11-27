@@ -3673,6 +3673,16 @@ function physicsTick() {
     if (sneakHeld) player.vel.y -= 0.04;
   }
 
+  // Player.travel swimming override: look pitch controls vertical swimming.
+  if (player.swimming) {
+    const lookY = Math.sin(player.pitch);
+    const verticalResponse = lookY < -0.2 ? 0.085 : 0.06;
+    const aboveIsEmpty = !isWaterAtWorld(player.pos.x, player.pos.y + 0.9, player.pos.z);
+    if (!(lookY > 0 && !jumpHeld && aboveIsEmpty)) {
+      player.vel.y += (lookY - player.vel.y) * verticalResponse;
+    }
+  }
+
   movePlayer();
 
   if (player.flying) {
@@ -6277,11 +6287,6 @@ window.__testMove = (x, y, z, dx, dz, vy = 0) => {
   player.vel.set(dx, vy, dz);
   player.onGround = vy === 0;
   player.flying = false;
-  if (inWater && !player.flying) {
-    if (jumpHeld) player.vel.y += 0.04;
-    if (sneakHeld) player.vel.y -= 0.04;
-  }
-
   movePlayer();
   return { x: player.pos.x, y: player.pos.y, z: player.pos.z, colliding: playerCollidesAt(player.pos.x, player.pos.y, player.pos.z) };
 };
