@@ -3593,9 +3593,13 @@ function physicsTick() {
     player.height = PLAYER_SWIM_HEIGHT;
     player.sneaking = false;
   } else if (player.swimming) {
-    if (!playerCollidesAt(player.pos.x, player.pos.y, player.pos.z, PLAYER_HEIGHT)) {
+    // Leaving water must always release the swim pose, even when the
+    // standing hitbox overlaps the bank/edge for one tick.
+    const canStand = !playerCollidesAt(player.pos.x, player.pos.y, player.pos.z, PLAYER_HEIGHT);
+    if (!inWater || canStand) {
       player.swimming = false;
       player.height = PLAYER_HEIGHT;
+      if (!canStand) unstuckPlayer();
     }
   }
   player.inWater = inWater;
