@@ -3577,7 +3577,11 @@ function physicsTick() {
   const climbable = bodyPropsList.some(p => p.climbable || p.class === 'ScaffoldingBlock');
 
   // Sprint is the swimming intent. Movement alone does not start the pose.
-  const wantSwimming = inWater && !player.flying && player.sprinting;
+  // Swimming also requires more than one block of water; standing in a
+  // shallow puddle must keep the normal hitbox.
+  const deepWater = isWaterAtWorld(player.pos.x, player.pos.y + 0.1, player.pos.z) &&
+    isWaterAtWorld(player.pos.x, player.pos.y + 1.1, player.pos.z);
+  const wantSwimming = inWater && deepWater && !player.flying && player.sprinting;
   if (wantSwimming) {
     player.swimming = true;
     player.height = PLAYER_SWIM_HEIGHT;
