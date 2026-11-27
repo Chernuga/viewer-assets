@@ -169,6 +169,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { BlockOverlay, createOverlayCanvas } from './viewer/engine.js';
 
 const errorOverlay = document.getElementById('errorOverlay');
 function showError(msg) { errorOverlay.style.display = 'block'; errorOverlay.textContent += msg + '\n'; }
@@ -312,6 +313,17 @@ camera.position.set(6, 6, 6);
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 3.0));
 
+let blockOverlay = null;
+try {
+  const engineCanvas = createOverlayCanvas(viewerEl);
+  blockOverlay = new BlockOverlay(engineCanvas);
+  blockOverlay.resize(initialWidth, initialHeight);
+  window.__blockOverlay = blockOverlay;
+} catch (err) {
+  console.warn('Custom WebGL2 block renderer unavailable:', err);
+  blockOverlay = null;
+}
+
 let lastFitW = 0, lastFitH = 0;
 function fitViewer() {
   const w = viewerEl?.clientWidth || window.innerWidth;
@@ -325,6 +337,7 @@ function fitViewer() {
   renderer.setSize(w, h, false);
   renderer.setViewport(0, 0, w, h);
   renderer.setScissorTest(false);
+  if (blockOverlay) blockOverlay.resize(w, h);
 }
 function ensureViewport() {
   if (!viewerEl) return;
@@ -1981,6 +1994,7 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
   }
   if (tintIndex !== undefined) mat.color = getTintColor(tintIndex);
 
+  mat.userData.texturePath = texPath;
   const reflectionStrength = getReflectionStrength(texPath);
   if (texture !== magentaTex && !solidTranslucent) {
     // Translucent faces reflect across the whole side; cutout/opaque faces use
@@ -2786,6 +2800,7 @@ function flushBuckets() {
   if (culled > 0) console.log(`Deduplicated ${culled} coincident faces`);
 
   let meshCount = 0, totalFaces = 0;
+  const engineBatches = { opaque: [], transparent: [] };
 
   function emitMesh(faces, material) {
     if (!faces.length) return;
@@ -2831,7 +2846,19 @@ function flushBuckets() {
   }
 
   for (const bucket of materialBuckets.values()) {
-    if (!bucket.material.transparent) {
+    const image = bucket.material.map?.image || bucket.material.userData.texturePath || null;
+    const tint = bucket.material.color ? [
+      bucket.material.color.r, bucket.material.color.g, bucket.material.color.b, 1,
+    ] : [1, 1, 1, 1];
+    if (bucket.material.transparent) {
+      engineBatches.transparent.push({
+        faces: bucket.faces, image, tint, opacity: bucket.material.opacity ?? 1,
+      });
+      // The custom overlay owns translucent rendering. Keep Three's pass only
+      // as a fallback when the WebGL2 engine is unavailable.
+      if (blockOverlay) continue;
+    } else {
+      engineBatches.opaque.push({ faces: bucket.faces });
       emitMesh(bucket.faces, bucket.material);
       continue;
     }
@@ -2852,6 +2879,7 @@ function flushBuckets() {
     }
   }
   materialBuckets.clear();
+  if (blockOverlay) blockOverlay.setWorld(engineBatches);
   console.log(`Flushed ${meshCount} transparent/opaque meshes (${totalFaces} faces)`);
 }
 
@@ -5827,6 +5855,18 @@ function animate() {
   updateReflections(delta);
   sortTranslucentFaces();
   renderer.render(scene, camera);
+  if (blockOverlay) {
+    const fog = scene.fog;
+    blockOverlay.render(
+      camera,
+      camera.projectionMatrix.elements,
+      camera.matrixWorldInverse.elements,
+      fog ? {
+        color: [fog.color.r, fog.color.g, fog.color.b],
+        near: fog.near,
+        far: fog.far,
+      } : { color: [0.02, 0.05, 0.08], near: 0, far: 10000 });
+  }
 }
 
 /* ============================= SHA REFRESH ============================= */
