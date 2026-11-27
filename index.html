@@ -2786,11 +2786,13 @@ function flushBuckets() {
   if (culled > 0) console.log(`Deduplicated ${culled} coincident faces`);
 
   let meshCount = 0, totalFaces = 0;
-  for (const bucket of materialBuckets.values()) {
+
+  function emitMesh(faces, material) {
+    if (!faces.length) return;
     const positions = [], normals = [], uvs = [], faceScales = [], tangents = [], bitangents = [], indices = [];
     const faceGroups = [];
     let vCount = 0;
-    for (const face of bucket.faces) {
+    for (const face of faces) {
       if (face.removed) continue;
       const c = face.corners, u = face.uvs, n = face.normal;
       for (let i = 0; i < 4; i++) {
@@ -2810,9 +2812,8 @@ function flushBuckets() {
           (c[0][2] + c[1][2] + c[2][2] + c[3][2]) / 4),
       });
       vCount += 4;
-      totalFaces++;
     }
-    if (vCount === 0) continue;
+    if (vCount === 0) return;
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
@@ -2822,13 +2823,36 @@ function flushBuckets() {
     g.setAttribute('faceBitangent', new THREE.Float32BufferAttribute(bitangents, 3));
     g.setIndex(indices);
     g.computeBoundingSphere();
-    const mesh = new THREE.Mesh(g, bucket.material);
+    const mesh = new THREE.Mesh(g, material);
     mesh.userData.faceGroups = faceGroups;
     worldGroup.add(mesh);
     meshCount++;
+    totalFaces += vCount / 4;
+  }
+
+  for (const bucket of materialBuckets.values()) {
+    if (!bucket.material.transparent) {
+      emitMesh(bucket.faces, bucket.material);
+      continue;
+    }
+    // Three.js sorts transparent objects, not individual merged faces. Split
+    // solid transparent blocks into per-block meshes so painter sorting is
+    // stable; fluids stay merged to keep draw calls bounded.
+    const byBlock = new Map();
+    for (const face of bucket.faces) {
+      if (face.removed) continue;
+      const id = physicsBlocks.get(face.blockKey);
+      const key = id && !isFluidBlock(id) ? face.blockKey : '__merged_fluid__';
+      let list = byBlock.get(key);
+      if (!list) byBlock.set(key, list = []);
+      list.push(face);
+    }
+    for (const faces of byBlock.values()) {
+      emitMesh(faces, bucket.material);
+    }
   }
   materialBuckets.clear();
-  console.log(`Flushed ${meshCount} merged meshes (${totalFaces} faces)`);
+  console.log(`Flushed ${meshCount} transparent/opaque meshes (${totalFaces} faces)`);
 }
 
 function sortTranslucentFaces() {
