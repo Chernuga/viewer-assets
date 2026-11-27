@@ -491,6 +491,8 @@ flatHeightTexture.colorSpace = THREE.NoColorSpace;
 
 let skyTexture = null;
 let skyMesh = null;
+let environmentSavedBackground = null;
+let environmentSkyHidden = false;
 let skyMaterial = null;
 let skyElapsed = 0;
 let sunMesh = null;
@@ -2375,11 +2377,6 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
     const face = el.faces[faceName];
     const texPath = resolveTexture(face.texture, modelTextures);
     const material = overrideMaterial || getBlockMaterial(texPath, face.tintindex, translucent, flat);
-    // Fluid surfaces are visible from both sides in-game (notably the
-    // underside of the surface when the camera is submerged).
-    if (!overrideMaterial && isFluidBlock(blockId)) {
-      material.side = THREE.DoubleSide;
-    }
     if (!overrideMaterial && material.map === magentaTex) {
       const key = `${blockId}|${texPath}`;
       if (!missingTextureReported.has(key)) {
@@ -3043,7 +3040,7 @@ async function build() {
     blockInfo.set(key, { id, pos, entries: modelEntries, properties: props, nbt, stateKey });
     physicsBlocks.set(key, id);
     physicsStates.set(key, props);
-    if (isFluidBlock(id)) fluidPositions.add(key);
+    if (isFluidBlock(id) || props.waterlogged === 'true') fluidPositions.add(key);
     if (!isShaderBlock(id) && !isTranslucentBlock(id) && !isCutoutBlock(id) && entriesAreOpaqueCube(modelEntries)) {
       opaquePositions.add(key);
     }
@@ -5629,9 +5626,9 @@ function updateLighting() {
 }
 
 function updateEnvironmentEffects() {
-  const eyeY = player.pos.y + player.eyeHeight;
-  const eyeX = player.pos.x;
-  const eyeZ = player.pos.z;
+  const eyeX = camera.position.x;
+  const eyeY = camera.position.y;
+  const eyeZ = camera.position.z;
   const eyeBlock = blockIdAtWorld(eyeX, eyeY, eyeZ)?.replace('minecraft:', '');
   let mode = 'none';
   if (isLavaAtWorld(eyeX, eyeY, eyeZ)) mode = 'lava';
@@ -5640,11 +5637,34 @@ function updateEnvironmentEffects() {
 
   const presets = {
     none:   { fog: null, color: 0x000000, near: 0, far: 10000, tint: 'rgba(0,0,0,0)', opacity: 0, image: 'none', blend: 'normal', size: 'auto' },
-    water:  { fog: 0x0b2f5c, color: 0x0b2f5c, near: 0.1, far: 18, tint: 'rgba(22,72,165,0.25)', opacity: 0.38, image: "url('minecraft/textures/misc/underwater.png')", blend: 'multiply', size: '128px 128px' },
-    lava:   { fog: 0x591600, color: 0x591600, near: 0.1, far: 2.6, tint: 'rgba(210,60,0,0.45)', opacity: 0.55, image: "url('minecraft/textures/misc/underwater.png')", blend: 'multiply', size: '96px 96px' },
-    powder: { fog: 0xdfefff, color: 0xdfefff, near: 0.1, far: 4, tint: 'rgba(225,240,255,0.25)', opacity: 0.45, image: "url('minecraft/textures/misc/powder_snow_outline.png')", blend: 'normal', size: '100% 100%' },
+    water:  { fog: 0x0b2f5c, color: 0x0b2f5c, near: -8, far: 24, tint: 'rgba(22,72,165,0.22)', opacity: 0.38, image: "url('minecraft/textures/misc/underwater.png')", blend: 'multiply', size: '128px 128px' },
+    lava:   { fog: 0x991900, color: 0x991900, near: 0.25, far: 1, tint: 'rgba(153,25,0,0)', opacity: 0, image: 'none', blend: 'normal', size: 'auto' },
+    powder: { fog: 0x9fbbcc, color: 0x9fbbcc, near: 0, far: 2, tint: 'rgba(159,187,204,0)', opacity: 0, image: 'none', blend: 'normal', size: 'auto' },
   };
   const preset = presets[mode];
+
+  if (mode === 'none') {
+    if (environmentSkyHidden) {
+      scene.background = environmentSavedBackground;
+      environmentSavedBackground = null;
+      environmentSkyHidden = false;
+      for (const obj of [skyMesh, starContainer, sunMesh, moonMesh]) {
+        if (obj) obj.visible = true;
+      }
+    }
+  } else {
+    if (!environmentSkyHidden) {
+      environmentSavedBackground = scene.background;
+      environmentSkyHidden = true;
+    }
+    scene.background = new THREE.Color(preset.fog);
+    for (const obj of [skyMesh, starContainer, sunMesh, moonMesh]) {
+      if (obj) obj.visible = false;
+    }
+  }
+  // The underwater bitmap overlay is first-person-only in Java.
+  const showOverlay = mode === 'water' && thirdPersonView === 0;
+  const tintOpacity = (mode === 'water' && !showOverlay) ? 0 : preset.opacity;
 
   if (!preset.fog) {
     scene.fog = null;
@@ -5661,7 +5681,7 @@ function updateEnvironmentEffects() {
     tint.style.backgroundImage = preset.image;
     tint.style.backgroundSize = preset.size;
     tint.style.backgroundBlendMode = preset.blend;
-    tint.style.opacity = String(preset.opacity);
+    tint.style.opacity = String(tintOpacity);
   }
 
   // Keep the custom Minecraft shaders' fog uniforms in sync as well.
@@ -5697,10 +5717,10 @@ function animate() {
   }
   if (cameraMode === 'creative') updatePlayer(delta);
   else controls.update();
-  updateEnvironmentEffects();
   updatePlayerHitbox();
   updateSky(delta);
   updateCelestialBodies(delta);
+  updateEnvironmentEffects();
   updateLighting();
   updateReflections(delta);
   renderer.render(scene, camera);
