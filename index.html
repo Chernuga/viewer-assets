@@ -1955,6 +1955,7 @@ function getBlockMaterial(texPath, tintIndex, translucent, flat) {
     side: flat ? THREE.DoubleSide : THREE.FrontSide,
     depthWrite: !translucent,
   });
+  if (/(^|\/)water_(still|flow)$/.test(texPath)) mat.opacity = 0.72;
   if (tintIndex !== undefined) mat.color = getTintColor(tintIndex);
 
   const reflectionStrength = getReflectionStrength(texPath);
@@ -2625,7 +2626,7 @@ function collectBlockEntityGeometry(info) {
   return true;
 }
 
-async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set()) {
+async function collectBlockFaces(info, opaquePositions, fluidPositions = new Map()) {
   const { id, pos, entries, properties } = info;
 
   // Collision is independent of whether the block has a render model. Some
@@ -2646,6 +2647,7 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
 
   const translucent = isTranslucentBlock(id);
   const fluid = isFluidBlock(id);
+  const fluidKind = id.includes('lava') ? 'lava' : 'water';
   const cutout = isCutoutBlock(id);
   // Leaves are a cutout material: even against opaque neighbours, keep every
   // leaf face so connected canopies stay full instead of growing holes.
@@ -2674,7 +2676,8 @@ async function collectBlockFaces(info, opaquePositions, fluidPositions = new Set
         for (const fn of FACE_NAMES) {
           const d = FACE_DIRS[fn];
           const nk = `${pos.x + d[0]},${pos.y + d[1]},${pos.z + d[2]}`;
-          if ((selfOpaque && opaquePositions.has(nk)) || (fluid && fluidPositions.has(nk))) {
+          if ((selfOpaque && opaquePositions.has(nk)) ||
+              (fluid && fluidPositions.get(nk) === fluidKind)) {
             (skipFaces || (skipFaces = new Set())).add(fn);
           }
         }
@@ -3029,7 +3032,7 @@ async function build() {
   /* ---- pass 1: resolve models in parallel ---- */
   const blockInfo = new Map();
   const opaquePositions = new Set();
-  const fluidPositions = new Set();
+  const fluidPositions = new Map();
 
   const { errors: resolveErrors } = await mapWithConcurrency(entries, concurrency, async ([key, spec]) => {
     const [id, props, nbt] = parseBlockSpec(spec);
@@ -3040,7 +3043,9 @@ async function build() {
     blockInfo.set(key, { id, pos, entries: modelEntries, properties: props, nbt, stateKey });
     physicsBlocks.set(key, id);
     physicsStates.set(key, props);
-    if (isFluidBlock(id) || props.waterlogged === 'true') fluidPositions.add(key);
+    if (isFluidBlock(id) || props.waterlogged === 'true') {
+      fluidPositions.set(key, id.includes('lava') ? 'lava' : 'water');
+    }
     if (!isShaderBlock(id) && !isTranslucentBlock(id) && !isCutoutBlock(id) && entriesAreOpaqueCube(modelEntries)) {
       opaquePositions.add(key);
     }
