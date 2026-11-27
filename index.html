@@ -2833,12 +2833,16 @@ function flushBuckets() {
 
 function sortTranslucentFaces() {
   const px = camera.position.x, py = camera.position.y, pz = camera.position.z;
+  camera.getWorldDirection(_lookDir);
+  const fx = _lookDir.x, fy = _lookDir.y, fz = _lookDir.z;
   for (const mesh of worldGroup.children) {
     if (!mesh.isMesh || !mesh.material?.transparent || !mesh.userData.faceGroups) continue;
     const groups = mesh.userData.faceGroups;
     for (const g of groups) {
       const dx = g.center.x - px, dy = g.center.y - py, dz = g.center.z - pz;
-      g.depth = dx * dx + dy * dy + dz * dz;
+      // View-space depth, not radial distance; radial sorting flips order at
+      // grazing angles and makes the visible top surface alternate.
+      g.depth = dx * fx + dy * fy + dz * fz;
     }
     groups.sort((a, b) => b.depth - a.depth);
     const arr = mesh.geometry.index.array;
