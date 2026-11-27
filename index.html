@@ -3576,11 +3576,8 @@ function physicsTick() {
   const inHoney = bodyPropsList.some(p => p.class === 'HoneyBlock');
   const climbable = bodyPropsList.some(p => p.climbable || p.class === 'ScaffoldingBlock');
 
-  // Wiki behavior: swimming activates by pressing forward in water; sprint is
-  // optional and only selects the faster sprint-swimming drag.
-  const wantsSwimMove = playerInput.forward || playerInput.back ||
-    playerInput.left || playerInput.right || player.sprinting;
-  const wantSwimming = inWater && !player.flying && wantsSwimMove;
+  // Sprint is the swimming intent. Movement alone does not start the pose.
+  const wantSwimming = inWater && !player.flying && player.sprinting;
   if (wantSwimming) {
     player.swimming = true;
     player.height = PLAYER_SWIM_HEIGHT;
