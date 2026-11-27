@@ -5065,6 +5065,7 @@ function updateHud() {
   }
   const state = player.flying ? 'Flying'
     : player.swimming ? 'Swimming'
+    : player.inWater ? (player.sprinting ? 'In Water' : 'In Water — hold Sprint')
     : (player.sneaking ? 'Sneaking'
     : (player.sprinting ? 'Sprinting' : (player.onGround ? 'Walking' : 'Falling')));
   const pos = `${player.pos.x.toFixed(2)} / ${player.pos.y.toFixed(2)} / ${player.pos.z.toFixed(2)}`;
@@ -6292,29 +6293,33 @@ window.__testMove = (x, y, z, dx, dz, vy = 0) => {
   movePlayer();
   return { x: player.pos.x, y: player.pos.y, z: player.pos.z, colliding: playerCollidesAt(player.pos.x, player.pos.y, player.pos.z) };
 };
-window.__waterTest = (x, y, z, held, forward = false, sprint = false, ticks = 40) => {
+window.__waterTrace = (x, y, z, pitch = 0, ticks = 30) => {
   player.pos.set(x, y, z);
   player.prevPos.copy(player.pos);
   player.vel.set(0, 0, 0);
+  player.pitch = pitch;
+  player.yaw = 0;
   player.flying = false;
   player.onGround = false;
   player.jumpCooldown = 0;
-  playerInput.forward = forward;
-  playerInput.jump = held;
-  playerInput.sneak = false;
-  playerInput.sprint = sprint;
-  for (let i = 0; i < ticks; i++) physicsTick();
-  playerInput.forward = false;
+  playerInput.forward = true;
+  playerInput.sprint = true;
   playerInput.jump = false;
+  playerInput.sneak = false;
+  const trace = [];
+  for (let i = 0; i < ticks; i++) {
+    physicsTick();
+    trace.push({
+      i, y: +player.pos.y.toFixed(3), vy: +player.vel.y.toFixed(3),
+      inWater: player.inWater, swimming: player.swimming,
+      height: player.height, eye: player.eyeHeight,
+      headWater: isWaterAtWorld(player.pos.x, player.pos.y + (player.swimming ? EYE_HEIGHT_SWIM : player.eyeHeight), player.pos.z),
+      sprinting: player.sprinting,
+    });
+  }
+  playerInput.forward = false;
   playerInput.sprint = false;
-  return {
-    x: player.pos.x, y: player.pos.y, z: player.pos.z,
-    inWater: player.inWater, swimming: player.swimming, sprinting: player.sprinting,
-    headWater: isWaterAtWorld(player.pos.x, player.pos.y + player.eyeHeight, player.pos.z),
-    headY: player.pos.y + player.eyeHeight,
-    height: player.height, eyeHeight: player.eyeHeight,
-    vel: [player.vel.x, player.vel.y, player.vel.z],
-  };
+  return trace;
 };
 
 window.__sceneBounds = () => {
