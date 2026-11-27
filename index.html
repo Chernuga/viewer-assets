@@ -3517,7 +3517,6 @@ function physicsTick() {
       player.vel.y = 0;
     }
   } else if (playerInput.jumpEdge && playerInput.jump) {
-    // Water Space is swim-up, not creative-flight double-tap.
     playerInput.jumpEdge = false;
   }
 
@@ -3673,12 +3672,7 @@ function physicsTick() {
   const wasOnGround = player.onGround;
   const preMoveVy = player.vel.y;
 
-  if (inWater && !player.flying) {
-    if (jumpHeld) player.vel.y += 0.04;
-    if (sneakHeld) player.vel.y -= 0.04;
-  }
-
-  // While swimming, look pitch also drives vertical velocity.
+  // Vertical swimming is controlled only by mouse look angle.
   if (player.swimming) {
     const lookY = Math.sin(player.pitch);
     const response = lookY < -0.2 ? 0.085 : 0.06;
