@@ -3595,6 +3595,11 @@ function physicsTick() {
   }
   player.inWater = inWater;
   player.inLava = inLava;
+  if (inWater && player.flying) {
+    // Entering water exits creative flight so the swim state is reachable.
+    player.flying = false;
+    player.vel.y = 0;
+  }
   const speedCandidates = [supportProps, ...bodyPropsList]
     .filter(p => p && p.class !== 'AirBlock')
     .map(p => p.speed);
@@ -3778,6 +3783,7 @@ function updatePlayer(delta) {
   // Smooth the crouch transition at render rate; doing it per tick made the
   // camera drop in visible 20 Hz steps.
   const swimHeadAboveWater = player.swimming &&
+    !isWaterAtWorld(player.pos.x, player.pos.y + EYE_HEIGHT, player.pos.z) &&
     !isWaterAtWorld(player.pos.x, player.pos.y + EYE_HEIGHT_SWIM, player.pos.z);
   const targetEye = player.swimming
     ? (swimHeadAboveWater ? EYE_HEIGHT : EYE_HEIGHT_SWIM)
