@@ -1859,6 +1859,13 @@ function isLavaAtWorld(x, y, z) {
   return id === 'lava' || id === 'flowing_lava';
 }
 
+function waterLevelAt(x, y, z) {
+  const id = blockIdAtWorld(x, y, z)?.replace('minecraft:', '');
+  if (id !== 'water' && id !== 'flowing_water') return null;
+  const level = Number(blockStateAtWorld(x, y, z)?.level);
+  return Number.isFinite(level) ? level : 0;
+}
+
 function getBiomeColor(temp, humidity, cmap) {
   if (!cmap) return new THREE.Color(1, 1, 1);
   // The colormap's valid triangle is lower-left: X is inverted temperature,
@@ -3127,6 +3134,7 @@ const player = {
   flyToggleTimer: 0,
   sprintToggleTimer: 0,
   fov: 70,
+  walkPhase: 0,
 };
 
 const playerInput = {
@@ -3619,6 +3627,19 @@ function physicsTick() {
     player.vel.z *= 0.25;
     player.vel.y *= 0.05;
   }
+  if (inWater && !player.flying) {
+    const level = waterLevelAt(player.pos.x, player.pos.y + 0.1, player.pos.z);
+    if (level !== null) {
+      const flow = 0.012;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const next = waterLevelAt(player.pos.x + dx, player.pos.y + 0.1, player.pos.z + dz);
+        if (next !== null && next > level) {
+          player.vel.x += dx * flow;
+          player.vel.z += dz * flow;
+        }
+      }
+    }
+  }
 
   if (!jumpHeld) player.jumpCooldown = 0;
 
@@ -3666,6 +3687,7 @@ function physicsTick() {
   if (inPowder) {
     player.vel.x *= 0.7;
     player.vel.z *= 0.7;
+    player.vel.y *= 0.65;
   } else if (inBerry) {
     player.vel.x *= 0.6;
     player.vel.z *= 0.6;
@@ -3729,8 +3751,40 @@ function updatePlayer(delta) {
     : player.sneaking ? EYE_HEIGHT_SNEAK : EYE_HEIGHT;
   player.eyeHeight += (targetEye - player.eyeHeight) * (1 - Math.exp(-EYE_SMOOTH_RATE * delta));
   _camPos.lerpVectors(player.prevPos, player.pos, alpha);
-  camera.position.set(_camPos.x, _camPos.y + player.eyeHeight, _camPos.z);
-  camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+
+  if (playerAvatar) {
+    const speed = Math.hypot(player.vel.x, player.vel.z);
+    player.walkPhase = (player.walkPhase || 0) + speed * delta * 8;
+    const swing = Math.sin(player.walkPhase) * Math.min(0.85, speed * 3);
+    const parts = playerAvatar.userData;
+    parts.armL.rotation.x = swing;
+    parts.armR.rotation.x = -swing;
+    parts.legL.rotation.x = -swing;
+    parts.legR.rotation.x = swing;
+    if (player.swimming) {
+      playerAvatar.rotation.x = Math.PI * 0.5;
+    } else {
+      playerAvatar.rotation.x = 0;
+    }
+    playerAvatar.position.copy(_camPos);
+    playerAvatar.rotation.y = player.yaw + Math.PI;
+    playerAvatar.visible = thirdPersonView !== 0 && cameraMode === 'creative';
+  }
+
+  const eye = new THREE.Vector3(_camPos.x, _camPos.y + player.eyeHeight, _camPos.z);
+  if (thirdPersonView !== 0 && cameraMode === 'creative') {
+    const forward = new THREE.Vector3(
+      -Math.sin(player.yaw) * Math.cos(player.pitch),
+      Math.sin(player.pitch),
+      -Math.cos(player.yaw) * Math.cos(player.pitch));
+    const distance = 3.5;
+    const offset = forward.clone().multiplyScalar(thirdPersonView === 1 ? -distance : distance);
+    camera.position.copy(eye).add(offset);
+    camera.lookAt(eye);
+  } else {
+    camera.position.copy(eye);
+    camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+  }
 
   const baseFov = CONFIG.player?.fov ?? 70;
   const targetFov = baseFov * (player.flying ? 1.1 : 1) * (player.sprinting ? 1.15 : 1);
@@ -4064,6 +4118,72 @@ let creativeIconRenderer = null;
 let creativeIconScene = null;
 let creativeIconCamera = null;
 let inventoryPlayerRenderer = null;
+let playerAvatar = null;
+let playerAvatarLoading = false;
+let thirdPersonView = 0;
+
+async function loadPlayerAvatar() {
+  if (playerAvatar || playerAvatarLoading) return;
+  playerAvatarLoading = true;
+  const skin = getTexture('entity/player/wide/steve');
+  await new Promise(resolve => {
+    if (skin.image?.complete) return resolve();
+    const start = performance.now();
+    const timer = setInterval(() => {
+      if (skin.image?.complete || performance.now() - start > 3000) {
+        clearInterval(timer); resolve();
+      }
+    }, 40);
+  });
+
+  const group = new THREE.Group();
+  group.scale.setScalar(1 / 16);
+  const addBox = (w, h, d, x, y, z, rects) => {
+    const geom = new THREE.BoxGeometry(w, h, d);
+    const uv = geom.attributes.uv;
+    for (let f = 0; f < 6; f++) {
+      const [rx, ry, rw, rh] = rects[f];
+      const u0 = rx / 64, u1 = (rx + rw) / 64;
+      const v0 = 1 - (ry + rh) / 64, v1 = 1 - ry / 64;
+      const uvOff = f * 4;
+      uv.setXY(uvOff + 0, u1, v0);
+      uv.setXY(uvOff + 1, u0, v0);
+      uv.setXY(uvOff + 2, u0, v1);
+      uv.setXY(uvOff + 3, u1, v1);
+    }
+    const material = new THREE.MeshBasicMaterial({
+      map: skin, transparent: true, alphaTest: 0.1, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geom, material);
+    mesh.position.set(x, y, z);
+    mesh.frustumCulled = false;
+    group.add(mesh);
+    return mesh;
+  };
+
+  const head = addBox(8, 8, 8, 0, 28, 0, [
+    [0, 8, 8, 8], [16, 8, 8, 8], [8, 0, 8, 8], [16, 0, 8, 8], [8, 8, 8, 8], [24, 8, 8, 8],
+  ]);
+  const body = addBox(8, 12, 4, 0, 18, 0, [
+    [16, 20, 4, 12], [28, 20, 4, 12], [20, 16, 8, 4], [28, 16, 8, 4], [20, 20, 8, 12], [32, 20, 8, 12],
+  ]);
+  const armL = addBox(4, 12, 4, -6, 18, 0, [
+    [40, 20, 4, 12], [48, 20, 4, 12], [44, 16, 4, 4], [48, 16, 4, 4], [44, 20, 4, 12], [52, 20, 4, 12],
+  ]);
+  const armR = addBox(4, 12, 4, 6, 18, 0, [
+    [40, 20, 4, 12], [48, 20, 4, 12], [44, 16, 4, 4], [48, 16, 4, 4], [44, 20, 4, 12], [52, 20, 4, 12],
+  ]);
+  const legL = addBox(4, 12, 4, -2, 6, 0, [
+    [0, 20, 4, 12], [8, 20, 4, 12], [4, 16, 4, 4], [8, 16, 4, 4], [4, 20, 4, 12], [12, 20, 4, 12],
+  ]);
+  const legR = addBox(4, 12, 4, 2, 6, 0, [
+    [0, 20, 4, 12], [8, 20, 4, 12], [4, 16, 4, 4], [8, 16, 4, 4], [4, 20, 4, 12], [12, 20, 4, 12],
+  ]);
+  group.userData = { head, body, armL, armR, legL, legR };
+  group.visible = false;
+  scene.add(group);
+  playerAvatar = group;
+}
 
 async function renderInventoryPlayer() {
   const canvas = document.getElementById('inventoryPlayer');
@@ -4636,6 +4756,7 @@ function updateCreativePanelBackground() {
     const player = document.getElementById('inventoryPlayer');
     if (player) player.dataset.ready = '0';
     renderInventoryPlayer();
+    loadPlayerAvatar();
   }
   renderInventoryText();
 }
@@ -4972,6 +5093,14 @@ window.addEventListener('keydown', (e) => {
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
 
   if (e.code === 'KeyH' && !e.repeat) setHeightMapsEnabled(!heightMapsEnabled);
+  if (e.code === 'F5') {
+    e.preventDefault();
+    if (!e.repeat) {
+      thirdPersonView = (thirdPersonView + 1) % 3;
+      if (playerAvatar) playerAvatar.visible = thirdPersonView !== 0;
+    }
+    return;
+  }
 
   if (creativeInventoryOpen) {
     if (e.code === 'Escape') closeCreativeInventory();
@@ -5531,6 +5660,7 @@ async function forceRefreshSha() {
   initFlatReflections();
   initPlayerController();
   initCreativeUI();
+  loadPlayerAvatar();
   await setupSky();
   await setupCelestialBodies();
   await setupStars();
@@ -6121,6 +6251,11 @@ window.__setPlayerView = (x, y, z, yaw, pitch) => {
   player.pitch = pitch;
   player.flying = true;
 };
+window.setThirdPersonView = (view) => {
+  thirdPersonView = ((Number(view) % 3) + 3) % 3;
+  if (playerAvatar) playerAvatar.visible = thirdPersonView !== 0;
+  return thirdPersonView;
+};
 window.__testMove = (x, y, z, dx, dz, vy = 0) => {
   player.pos.set(x, y, z);
   player.prevPos.copy(player.pos);
@@ -6207,6 +6342,7 @@ window.addEventListener('blur', () => { hitboxF3Held = false; });
   initFlatReflections();
   initPlayerController();
   initCreativeUI();
+  loadPlayerAvatar();
   await setupSky();
   await setupCelestialBodies();
   await setupStars();
