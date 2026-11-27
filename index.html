@@ -3578,7 +3578,11 @@ function physicsTick() {
     player.pos.x,
     player.pos.y + (player.swimming ? EYE_HEIGHT_SWIM : player.eyeHeight),
     player.pos.z);
-  const wantSwimming = inWater && !player.flying && player.sprinting && headInWater;
+  // Java updateSwimming has hysteresis: a swimmer keeps the pose while still
+  // sprinting in water, even after the head breaks the surface. Starting the
+  // pose still requires the head to be underwater.
+  const wantSwimming = !player.flying && player.sprinting && inWater &&
+    (player.swimming || headInWater);
   if (wantSwimming && !playerCollidesAt(player.pos.x, player.pos.y, player.pos.z, PLAYER_SWIM_HEIGHT)) {
     player.swimming = true;
     player.height = PLAYER_SWIM_HEIGHT;
