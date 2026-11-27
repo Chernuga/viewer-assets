@@ -3777,7 +3777,10 @@ function updatePlayer(delta) {
   const alpha = Math.min(1, physicsAccumulator / TICK_SECONDS);
   // Smooth the crouch transition at render rate; doing it per tick made the
   // camera drop in visible 20 Hz steps.
-  const targetEye = player.swimming ? EYE_HEIGHT_SWIM
+  const swimHeadAboveWater = player.swimming &&
+    !isWaterAtWorld(player.pos.x, player.pos.y + EYE_HEIGHT_SWIM, player.pos.z);
+  const targetEye = player.swimming
+    ? (swimHeadAboveWater ? EYE_HEIGHT : EYE_HEIGHT_SWIM)
     : player.sneaking ? EYE_HEIGHT_SNEAK : EYE_HEIGHT;
   player.eyeHeight += (targetEye - player.eyeHeight) * (1 - Math.exp(-EYE_SMOOTH_RATE * delta));
   _camPos.lerpVectors(player.prevPos, player.pos, alpha);
