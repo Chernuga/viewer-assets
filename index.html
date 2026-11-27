@@ -3505,7 +3505,9 @@ function physicsTick() {
   const jumpHeld = playerInput.jump;
   const sneakHeld = playerInput.sneak;
 
-  if (playerInput.jumpEdge && playerInput.jump) {
+  const inWaterAtStart = player.inWater || player.swimming || isWaterAtWorld(
+    player.pos.x, player.pos.y + 0.1, player.pos.z);
+  if (playerInput.jumpEdge && playerInput.jump && !inWaterAtStart) {
     playerInput.jumpEdge = false;
     if (player.flyToggleTimer <= 0) {
       player.flyToggleTimer = DOUBLE_TAP_TICKS;
@@ -3514,6 +3516,9 @@ function physicsTick() {
       player.flyToggleTimer = 0;
       player.vel.y = 0;
     }
+  } else if (playerInput.jumpEdge && playerInput.jump) {
+    // In water Space is swim-up, not a double-tap flight toggle.
+    playerInput.jumpEdge = false;
   }
 
   // Sprint start: hold Ctrl (or Cmd) or double-tap forward. The double-tap
@@ -3571,24 +3576,28 @@ function physicsTick() {
   const inHoney = bodyPropsList.some(p => p.class === 'HoneyBlock');
   const climbable = bodyPropsList.some(p => p.climbable || p.class === 'ScaffoldingBlock');
 
-  // Java only uses the swimming pose when swimming is actually requested,
-  // or when the head is submerged. Merely standing in shallow water must not
-  // shrink the hitbox and camera.
-  const headInWater = isWaterAtWorld(
-    player.pos.x, player.pos.y + player.eyeHeight, player.pos.z);
-  const wantSwimming = inWater && !player.flying && player.sprinting && headInWater;
+  // Wiki behavior: swimming activates by pressing forward in water; sprint is
+  // optional and only selects the faster sprint-swimming drag.
+  const wantsSwimMove = playerInput.forward || playerInput.back ||
+    playerInput.left || playerInput.right || player.sprinting;
+  const wantSwimming = inWater && !player.flying && wantsSwimMove;
   if (wantSwimming) {
     player.swimming = true;
     player.height = PLAYER_SWIM_HEIGHT;
     player.sneaking = false;
   } else if (player.swimming) {
-    if (!playerCollidesAt(player.pos.x, player.pos.y, player.pos.z, PLAYER_HEIGHT)) {
-      player.swimming = false;
-      player.height = PLAYER_HEIGHT;
-    }
+    // Never remain stuck in the 0.6 pose after leaving the water.
+    const blocked = playerCollidesAt(player.pos.x, player.pos.y, player.pos.z, PLAYER_HEIGHT);
+    player.swimming = false;
+    player.height = PLAYER_HEIGHT;
+    if (blocked) unstuckPlayer();
   }
   player.inWater = inWater;
   player.inLava = inLava;
+  if (inWater && player.flying) {
+    player.flying = false;
+    player.vel.y = 0;
+  }
   const speedCandidates = [supportProps, ...bodyPropsList]
     .filter(p => p && p.class !== 'AirBlock')
     .map(p => p.speed);
@@ -3669,6 +3678,15 @@ function physicsTick() {
   if (inWater && !player.flying) {
     if (jumpHeld) player.vel.y += 0.04;
     if (sneakHeld) player.vel.y -= 0.04;
+  }
+
+  if (player.swimming) {
+    const lookY = Math.sin(player.pitch);
+    const response = lookY < -0.2 ? 0.085 : 0.06;
+    const aboveIsEmpty = !isWaterAtWorld(player.pos.x, player.pos.y + 0.9, player.pos.z);
+    if (!(lookY > 0 && !jumpHeld && aboveIsEmpty)) {
+      player.vel.y += (lookY - player.vel.y) * response;
+    }
   }
 
   movePlayer();
@@ -3754,7 +3772,10 @@ function updatePlayer(delta) {
   const alpha = Math.min(1, physicsAccumulator / TICK_SECONDS);
   // Smooth the crouch transition at render rate; doing it per tick made the
   // camera drop in visible 20 Hz steps.
-  const targetEye = player.swimming ? EYE_HEIGHT_SWIM
+  const swimHeadAboveWater = player.swimming &&
+    !isWaterAtWorld(player.pos.x, player.pos.y + EYE_HEIGHT_SWIM, player.pos.z);
+  const targetEye = player.swimming
+    ? (swimHeadAboveWater ? EYE_HEIGHT : EYE_HEIGHT_SWIM)
     : player.sneaking ? EYE_HEIGHT_SNEAK : EYE_HEIGHT;
   player.eyeHeight += (targetEye - player.eyeHeight) * (1 - Math.exp(-EYE_SMOOTH_RATE * delta));
   _camPos.lerpVectors(player.prevPos, player.pos, alpha);
