@@ -54,7 +54,7 @@
     }
     body.play #webgl-canvas { cursor:crosshair; }
     .error-overlay { position:absolute; top:10px; right:10px; max-width:400px; max-height:300px; overflow:auto; background:rgba(255,0,0,0.1); border:1px solid rgba(255,0,0,0.3); border-radius:8px; padding:8px; font-size:12px; color:#ff9999; display:none; z-index:20; white-space:pre-wrap; word-break:break-all; }
-    #environmentTint { position:fixed; inset:0; pointer-events:none; z-index:3; opacity:0; transition:opacity 0.18s linear, background-color 0.18s linear; }
+    #environmentTint { position:fixed; inset:0; pointer-events:none; z-index:3; opacity:0; background-position:center; background-repeat:repeat; image-rendering:pixelated; transition:opacity 0.18s linear, background-color 0.18s linear; }
     .creative-bar { position:absolute; left:50%; bottom:0; transform:translateX(-50%); width:364px; height:44px; padding:0; border:0; background-image:url('minecraft/textures/gui/sprites/hud/hotbar.png'); background-size:364px 44px; background-repeat:no-repeat; image-rendering:pixelated; z-index:14; pointer-events:none; }
     .creative-slot { position:absolute; width:40px; height:40px; padding:0; border:0; background:transparent; cursor:pointer; overflow:visible; pointer-events:auto; }
     .creative-slot img { position:absolute; left:var(--hotbar-icon-inset,4px); top:var(--hotbar-icon-inset,4px); width:var(--hotbar-icon,32px); height:var(--hotbar-icon,32px); object-fit:contain; image-rendering:pixelated; pointer-events:none; }
@@ -2375,6 +2375,11 @@ function collectElementFaces(el, modelTextures, blockId, q, offset, skipFaces, o
     const face = el.faces[faceName];
     const texPath = resolveTexture(face.texture, modelTextures);
     const material = overrideMaterial || getBlockMaterial(texPath, face.tintindex, translucent, flat);
+    // Fluid surfaces are visible from both sides in-game (notably the
+    // underside of the surface when the camera is submerged).
+    if (!overrideMaterial && isFluidBlock(blockId)) {
+      material.side = THREE.DoubleSide;
+    }
     if (!overrideMaterial && material.map === magentaTex) {
       const key = `${blockId}|${texPath}`;
       if (!missingTextureReported.has(key)) {
@@ -5634,10 +5639,10 @@ function updateEnvironmentEffects() {
   else if (eyeBlock === 'powder_snow') mode = 'powder';
 
   const presets = {
-    none:   { fog: null, color: 0x000000, near: 0, far: 10000, tint: 'rgba(0,0,0,0)', opacity: 0 },
-    water:  { fog: 0x0b2f5c, color: 0x0b2f5c, near: 0.1, far: 18, tint: 'rgba(16,64,145,0.34)', opacity: 1 },
-    lava:   { fog: 0x591600, color: 0x591600, near: 0.1, far: 2.6, tint: 'rgba(210,60,0,0.58)', opacity: 1 },
-    powder: { fog: 0xdfefff, color: 0xdfefff, near: 0.1, far: 4, tint: 'rgba(225,240,255,0.42)', opacity: 1 },
+    none:   { fog: null, color: 0x000000, near: 0, far: 10000, tint: 'rgba(0,0,0,0)', opacity: 0, image: 'none', blend: 'normal', size: 'auto' },
+    water:  { fog: 0x0b2f5c, color: 0x0b2f5c, near: 0.1, far: 18, tint: 'rgba(22,72,165,0.55)', opacity: 0.9, image: "url('minecraft/textures/misc/underwater.png')", blend: 'multiply', size: '128px 128px' },
+    lava:   { fog: 0x591600, color: 0x591600, near: 0.1, far: 2.6, tint: 'rgba(210,60,0,0.72)', opacity: 0.95, image: "url('minecraft/textures/misc/underwater.png')", blend: 'multiply', size: '96px 96px' },
+    powder: { fog: 0xdfefff, color: 0xdfefff, near: 0.1, far: 4, tint: 'rgba(225,240,255,0.25)', opacity: 0.95, image: "url('minecraft/textures/misc/powder_snow_outline.png')", blend: 'normal', size: '100% 100%' },
   };
   const preset = presets[mode];
 
@@ -5653,6 +5658,9 @@ function updateEnvironmentEffects() {
   const tint = document.getElementById('environmentTint');
   if (tint) {
     tint.style.backgroundColor = preset.tint;
+    tint.style.backgroundImage = preset.image;
+    tint.style.backgroundSize = preset.size;
+    tint.style.backgroundBlendMode = preset.blend;
     tint.style.opacity = String(preset.opacity);
   }
 
