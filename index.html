@@ -3513,10 +3513,7 @@ function physicsTick() {
   const jumpHeld = playerInput.jump;
   const sneakHeld = playerInput.sneak;
 
-  const inFluidAtStart = player.inWater || player.inLava || player.swimming ||
-    isWaterAtWorld(player.pos.x, player.pos.y + 0.1, player.pos.z) ||
-    isLavaAtWorld(player.pos.x, player.pos.y + 0.1, player.pos.z);
-  if (playerInput.jumpEdge && playerInput.jump && !inFluidAtStart) {
+  if (playerInput.jumpEdge && playerInput.jump) {
     playerInput.jumpEdge = false;
     if (player.flyToggleTimer <= 0) {
       player.flyToggleTimer = DOUBLE_TAP_TICKS;
@@ -3524,9 +3521,11 @@ function physicsTick() {
       player.flying = !player.flying;
       player.flyToggleTimer = 0;
       player.vel.y = 0;
+      if (player.flying) {
+        player.swimming = false;
+        player.height = PLAYER_HEIGHT;
+      }
     }
-  } else if (playerInput.jumpEdge && playerInput.jump) {
-    playerInput.jumpEdge = false;
   }
 
   // Sprint start: hold Ctrl (or Cmd) or double-tap forward. The double-tap
