@@ -3575,8 +3575,8 @@ function physicsTick() {
   // or when the head is submerged. Merely standing in shallow water must not
   // shrink the hitbox and camera.
   const headInWater = isWaterAtWorld(
-    player.pos.x, player.pos.y + Math.max(0.35, player.height - 0.05), player.pos.z);
-  const wantSwimming = inWater && !player.flying && (player.sprinting || headInWater);
+    player.pos.x, player.pos.y + player.eyeHeight, player.pos.z);
+  const wantSwimming = inWater && !player.flying && player.sprinting && headInWater;
   if (wantSwimming) {
     player.swimming = true;
     player.height = PLAYER_SWIM_HEIGHT;
@@ -3606,8 +3606,8 @@ function physicsTick() {
     horizontalDrag = AIR_DRAG;
     accel = FLY_ACCEL * (player.sprinting ? 2 : 1);
   } else if (inWater) {
-    horizontalDrag = 0.8;
-    accel = player.sprinting ? 0.03 : 0.02;
+    horizontalDrag = player.sprinting ? 0.9 : 0.8;
+    accel = 0.02;
   } else if (player.onGround) {
     horizontalDrag = groundDrag;
     accel = WALK_ACCEL * (player.sprinting ? SPRINT_ACCEL_MULT : 1) *
@@ -3666,17 +3666,21 @@ function physicsTick() {
   const wasOnGround = player.onGround;
   const preMoveVy = player.vel.y;
 
+  if (inWater && !player.flying) {
+    if (jumpHeld) player.vel.y += 0.04;
+    if (sneakHeld) player.vel.y -= 0.04;
+  }
+
   movePlayer();
 
   if (player.flying) {
     // The vertical impulse is preserved but heavily damped; gravity does not apply.
     player.vel.y = player.yCollided ? 0 : preMoveVy * FLY_VERTICAL_DRAG;
   } else if (inWater) {
-    // Java water movement: reduced gravity plus swim-up/sink-down input.
-    player.vel.y -= 0.02;
-    if (jumpHeld) player.vel.y += 0.04;
-    if (sneakHeld) player.vel.y -= 0.04;
+    // LivingEntity.travelInWater: vertical drag 0.8, and only a falling,
+    // non-sprinting entity gets the 1/16-gravity adjustment.
     player.vel.y *= 0.8;
+    if (!player.sprinting && player.vel.y <= 0) player.vel.y -= GRAVITY / 16;
   } else if (inLava) {
     player.vel.y -= 0.02;
     if (jumpHeld) player.vel.y += 0.02;
@@ -6266,6 +6270,11 @@ window.__testMove = (x, y, z, dx, dz, vy = 0) => {
   player.vel.set(dx, vy, dz);
   player.onGround = vy === 0;
   player.flying = false;
+  if (inWater && !player.flying) {
+    if (jumpHeld) player.vel.y += 0.04;
+    if (sneakHeld) player.vel.y -= 0.04;
+  }
+
   movePlayer();
   return { x: player.pos.x, y: player.pos.y, z: player.pos.z, colliding: playerCollidesAt(player.pos.x, player.pos.y, player.pos.z) };
 };
