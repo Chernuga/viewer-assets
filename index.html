@@ -3676,7 +3676,12 @@ function physicsTick() {
   const wasOnGround = player.onGround;
   const preMoveVy = player.vel.y;
 
-  // Vertical swimming is controlled only by mouse look angle.
+  // Vertical swimming is controlled by mouse look, with Space as an
+  // additional swim-up impulse.
+  if (inWater && !player.flying) {
+    if (jumpHeld) player.vel.y += 0.04;
+    if (sneakHeld) player.vel.y -= 0.04;
+  }
   if (player.swimming && !player.flying) {
     const lookY = Math.sin(player.pitch);
     const response = lookY < -0.2 ? 0.085 : 0.06;
