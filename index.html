@@ -3513,7 +3513,10 @@ function physicsTick() {
   const jumpHeld = playerInput.jump;
   const sneakHeld = playerInput.sneak;
 
-  if (playerInput.jumpEdge && playerInput.jump) {
+  const inFluidAtStart = player.inWater || player.inLava || player.swimming ||
+    isWaterAtWorld(player.pos.x, player.pos.y + 0.1, player.pos.z) ||
+    isLavaAtWorld(player.pos.x, player.pos.y + 0.1, player.pos.z);
+  if (playerInput.jumpEdge && playerInput.jump && !inFluidAtStart) {
     playerInput.jumpEdge = false;
     if (player.flyToggleTimer <= 0) {
       player.flyToggleTimer = DOUBLE_TAP_TICKS;
@@ -3522,6 +3525,8 @@ function physicsTick() {
       player.flyToggleTimer = 0;
       player.vel.y = 0;
     }
+  } else if (playerInput.jumpEdge && playerInput.jump) {
+    playerInput.jumpEdge = false;
   }
 
   // Sprint start: hold Ctrl (or Cmd) or double-tap forward. The double-tap
@@ -3617,6 +3622,9 @@ function physicsTick() {
   } else if (inWater) {
     horizontalDrag = player.sprinting ? 0.9 : 0.8;
     accel = 0.02;
+  } else if (inLava) {
+    horizontalDrag = 0.5;
+    accel = 0.02;
   } else if (player.onGround) {
     horizontalDrag = groundDrag;
     accel = WALK_ACCEL * (player.sprinting ? SPRINT_ACCEL_MULT : 1) *
@@ -3675,7 +3683,7 @@ function physicsTick() {
   const wasOnGround = player.onGround;
   const preMoveVy = player.vel.y;
 
-  if (inWater && !player.flying) {
+  if ((inWater || inLava) && !player.flying) {
     if (jumpHeld) player.vel.y += 0.04;
     if (sneakHeld) player.vel.y -= 0.04;
   }
@@ -3691,9 +3699,9 @@ function physicsTick() {
     player.vel.y *= 0.8;
     if (!player.sprinting && player.vel.y <= 0) player.vel.y -= GRAVITY / 16;
   } else if (inLava) {
-    player.vel.y -= 0.02;
-    if (jumpHeld) player.vel.y += 0.02;
+    // Lava has the same jump-in-liquid impulse but much stronger drag.
     player.vel.y *= 0.5;
+    if (player.vel.y <= 0) player.vel.y -= GRAVITY / 32;
   } else {
     player.vel.y = (player.vel.y - GRAVITY) * 0.98;
   }
